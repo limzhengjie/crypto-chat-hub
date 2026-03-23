@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, PanelLeftClose, PanelLeft, Zap } from "lucide-react";
+import { Send, PanelLeftClose, PanelLeft, Zap, Download, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatSidebar, type ChatSession } from "@/components/ChatSidebar";
 import { ChatMessage } from "@/components/ChatMessage";
@@ -11,6 +11,13 @@ interface Message {
   role: "user" | "assistant";
   content: string;
 }
+
+const QUICK_ACTIONS = [
+  "What's happening with Ethereum right now?",
+  "Compare ETH vs SOL as investments",
+  "What are the biggest risks for ETH holders?",
+  "Generate a quick BTC market summary",
+];
 
 const SAMPLE_RESPONSES: Record<string, string> = {
   default:
@@ -45,6 +52,7 @@ export default function Index() {
   const [input, setInput] = useState("");
   const [activeCoin, setActiveCoin] = useState<string | null>(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -54,26 +62,9 @@ export default function Index() {
 
   const handleSend = () => {
     if (!input.trim()) return;
-    const userMessage = input.trim();
+    const userMessage = input;
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
-    setIsTyping(true);
-
-    const lower = userMessage.toLowerCase();
-    let responseKey = "default";
-    if (lower.includes("btc") || lower.includes("bitcoin")) responseKey = "btc";
-    else if (lower.includes("eth") || lower.includes("ethereum")) responseKey = "eth";
-    else if (lower.includes("sol") || lower.includes("solana")) responseKey = "sol";
-    else if (lower.includes("xrp") || lower.includes("ripple")) responseKey = "xrp";
-    else if (lower.includes("usdt") || lower.includes("tether")) responseKey = "usdt";
-
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: SAMPLE_RESPONSES[responseKey] },
-      ]);
-      setIsTyping(false);
-    }, 800 + Math.random() * 600);
+    sendMessage(userMessage);
   };
 
   const handleNewChat = () => {
@@ -96,7 +87,105 @@ export default function Index() {
     }
   };
 
+  const sendMessage = (rawMessage: string) => {
+    const userMessage = rawMessage.trim();
+    if (!userMessage) return;
+
+    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setIsTyping(true);
+
+    const lower = userMessage.toLowerCase();
+    let responseKey = "default";
+    if (lower.includes("btc") || lower.includes("bitcoin")) responseKey = "btc";
+    else if (lower.includes("eth") || lower.includes("ethereum")) responseKey = "eth";
+    else if (lower.includes("sol") || lower.includes("solana")) responseKey = "sol";
+    else if (lower.includes("xrp") || lower.includes("ripple")) responseKey = "xrp";
+    else if (lower.includes("usdt") || lower.includes("tether")) responseKey = "usdt";
+
+    setTimeout(() => {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: SAMPLE_RESPONSES[responseKey] },
+      ]);
+      setIsTyping(false);
+    }, 800 + Math.random() * 600);
+  };
+
   const selectedCoinData = activeCoin ? COINS.find((c) => c.symbol === activeCoin) : null;
+
+  const handleQuickAction = (prompt: string) => {
+    setInput("");
+    sendMessage(prompt);
+  };
+
+  const buildReportMarkdown = () => {
+    const now = new Date().toISOString();
+    const coinSection = selectedCoinData
+      ? [
+          "## Selected Coin Snapshot",
+          `- Token: ${selectedCoinData.name} (${selectedCoinData.symbol})`,
+          `- Price: ${selectedCoinData.price}`,
+          `- 24h Change: ${selectedCoinData.change24h.toFixed(2)}%`,
+          `- Market Cap: ${selectedCoinData.marketCap}`,
+          `- Volume (24h): ${selectedCoinData.volume}`,
+          `- 24h Range: ${selectedCoinData.low24h} -> ${selectedCoinData.high24h}`,
+          "",
+        ].join("\n")
+      : "## Selected Coin Snapshot\n- No coin selected\n";
+
+    const transcript = messages
+      .map((message, i) => `### ${i + 1}. ${message.role === "user" ? "User" : "Assistant"}\n${message.content}`)
+      .join("\n\n");
+
+    return [
+      "# CryptoChat Session Report",
+      "",
+      `- Generated at: ${now}`,
+      `- Session ID: ${activeSession ?? "none"}`,
+      "",
+      coinSection,
+      "## Conversation Transcript",
+      transcript || "- No messages yet",
+      "",
+      "> Note: Demo mode report. Integrate backend AI + live APIs for production accuracy.",
+      "",
+    ].join("\n");
+  };
+
+  const handleExportReport = () => {
+    setIsExporting(true);
+    const markdown = buildReportMarkdown();
+    const fileName = `cryptochat-report-${Date.now()}.md`;
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    setIsExporting(false);
+  };
+
+  const handleShareReport = async () => {
+    const markdown = buildReportMarkdown();
+    const sharePayload = {
+      title: "CryptoChat Session Report",
+      text: markdown,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(sharePayload);
+        return;
+      }
+
+      await navigator.clipboard.writeText(markdown);
+    } catch (_error) {
+      // User may cancel share dialog; fallback to no-op in demo mode.
+    }
+  };
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -131,7 +220,22 @@ export default function Index() {
             <Zap className="h-5 w-5 text-primary" />
             <h1 className="font-semibold text-foreground tracking-tight">CryptoChat</h1>
           </div>
-          <span className="text-xs font-mono text-muted-foreground ml-auto">Live Market Data</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleExportReport}
+            disabled={isExporting}
+            className="ml-auto"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            Export Report
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={handleShareReport}>
+            <Share2 className="h-4 w-4 mr-1" />
+            Share
+          </Button>
+          <span className="text-xs font-mono text-muted-foreground">Live Market Data</span>
         </header>
 
         {/* Coin Bar */}
@@ -185,6 +289,19 @@ export default function Index() {
         {/* Input */}
         <div className="border-t border-border p-4 shrink-0">
           <div className="max-w-3xl mx-auto">
+            <div className="mb-3 flex flex-wrap gap-2">
+              {QUICK_ACTIONS.map((action) => (
+                <Button
+                  key={action}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleQuickAction(action)}
+                >
+                  {action}
+                </Button>
+              ))}
+            </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
