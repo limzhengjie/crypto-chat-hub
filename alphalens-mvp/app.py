@@ -6,13 +6,16 @@ Chat      : Ask anything → GPT-4o agent fetches from CoinGecko, DefiLlama, Bin
 Deep Dive : One-click comprehensive report from all data sources
 """
 
+import io
 import os
+import re
 
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 from dotenv import load_dotenv
+from docx import Document
 
 from src.database import init_db
 from src.ws_client import BinanceKlineStream
@@ -61,6 +64,70 @@ DEEP_DIVE_TOKENS = [
     "ARB",
     "OP",
 ]
+
+
+def _report_to_docx_bytes(report_text: str, symbol: str) -> bytes:
+    """Convert markdown-like report text to a .docx file in memory."""
+    def _add_markdown_runs(paragraph, text: str) -> None:
+        """
+        Render simple markdown emphasis to Word runs.
+        Supports: **bold**, __bold__, *italic*, _italic_.
+        """
+        pattern = r"(\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_)"
+        idx = 0
+        for match in re.finditer(pattern, text):
+            start, end = match.span()
+            if start > idx:
+                paragraph.add_run(text[idx:start])
+
+            token = match.group(0)
+            if token.startswith("**") and token.endswith("**"):
+                run = paragraph.add_run(token[2:-2])
+                run.bold = True
+            elif token.startswith("__") and token.endswith("__"):
+                run = paragraph.add_run(token[2:-2])
+                run.bold = True
+            elif token.startswith("*") and token.endswith("*"):
+                run = paragraph.add_run(token[1:-1])
+                run.italic = True
+            elif token.startswith("_") and token.endswith("_"):
+                run = paragraph.add_run(token[1:-1])
+                run.italic = True
+            idx = end
+
+        if idx < len(text):
+            paragraph.add_run(text[idx:])
+
+    doc = Document()
+    doc.add_heading(f"AlphaLens Deep Dive Report - {symbol}", level=0)
+
+    for raw_line in report_text.splitlines():
+        line = raw_line.strip()
+
+        if not line:
+            # Keep section spacing in the generated document.
+            doc.add_paragraph("")
+            continue
+        if line.startswith("### "):
+            p = doc.add_heading("", level=3)
+            _add_markdown_runs(p, line[4:].strip())
+        elif line.startswith("## "):
+            p = doc.add_heading("", level=2)
+            _add_markdown_runs(p, line[3:].strip())
+        elif line.startswith("# "):
+            p = doc.add_heading("", level=1)
+            _add_markdown_runs(p, line[2:].strip())
+        elif line.startswith(("- ", "* ")):
+            p = doc.add_paragraph(style="List Bullet")
+            _add_markdown_runs(p, line[2:].strip())
+        else:
+            p = doc.add_paragraph()
+            _add_markdown_runs(p, line)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 # ── Page config ──────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -1038,6 +1105,19 @@ with tab_report:
         st.divider()
         st.caption(f"Report for **{st.session_state['last_report_symbol']}**")
         st.markdown(st.session_state["last_report"])
+        report_symbol_safe = st.session_state["last_report_symbol"].lower()
+        timestamp = pd.Timestamp.utcnow().strftime("%Y%m%d-%H%M%S")
+        report_docx = _report_to_docx_bytes(
+            st.session_state["last_report"], st.session_state["last_report_symbol"]
+        )
+        st.download_button(
+            "⬇️ Download Word (.docx)",
+            data=report_docx,
+            file_name=f"alphalens-{report_symbol_safe}-report-{timestamp}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True,
+            key="download_deep_dive_docx",
+        )
 
 # ════════════════════════════════════════════════════════════════════════════════
 # TAB 4 — LIVE PREDICTION MARKETS
