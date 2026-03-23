@@ -104,8 +104,9 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 ### 3. Install dependencies
 
 ```bash
-pip install -r requirements.txt
-```
+python -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
+
 
 ### 4. Add your OpenAI API key
 
@@ -125,6 +126,8 @@ gpt_api_key=sk-proj-...
 
 ```bash
 streamlit run app.py
+python -m streamlit run app.py
+python3 -m streamlit run app.py
 ```
 
 Opens at **http://localhost:8501**.
