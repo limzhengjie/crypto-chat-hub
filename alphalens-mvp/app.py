@@ -1,11 +1,12 @@
 """
-AlphaLens MVP
-─────────────
-Binance WebSocket (klines + order book)  →  SQLite  →  Streamlit  →  GPT-4o
+AlphaLens — AI-Powered Crypto Research Agent
+─────────────────────────────────────────────
+Dashboard : Binance WebSocket → SQLite → Plotly charts
+Chat      : Ask anything → GPT-4o agent fetches from CoinGecko, DefiLlama, Binance → cited answer
+Deep Dive : One-click comprehensive report from all data sources
 """
 
 import os
-import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -13,41 +14,290 @@ from plotly.subplots import make_subplots
 import streamlit as st
 from dotenv import load_dotenv
 
-from src.database import init_db, get_klines
+from src.database import init_db
 from src.ws_client import BinanceKlineStream
 from src.orderbook import BinanceOrderBookStream
 from src.history import fetch_historical_klines
-from src.indicators import add_indicators
-from src.llm_summary import summarize_trend
+from src.agent import run_agent, deep_dive
+from src.scanner import scan_markets
+from src.strategies import run_all_strategies
 
 load_dotenv()
 
 AVAILABLE_SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
-    "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT",
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "ADAUSDT",
+    "AVAXUSDT",
 ]
 
 CHART_COLORS = ["#7c83fd", "#00e676", "#ff9800", "#e91e63"]
 
-# ── Page config ─────────────────────────────────────────────────────────────────
+TOOL_LABELS = {
+    "get_market_data": "📊 Fetching market data from CoinGecko",
+    "get_tvl": "🔗 Fetching TVL from DefiLlama",
+    "get_funding_rate": "📈 Fetching funding rates from Binance Futures",
+    "get_open_interest": "📉 Fetching open interest from Binance Futures",
+    "get_technical_analysis": "🔬 Running technical analysis on Binance data",
+}
+
+DEEP_DIVE_TOKENS = [
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "ADA",
+    "AVAX",
+    "DOT",
+    "LINK",
+    "UNI",
+    "NEAR",
+    "ARB",
+    "OP",
+]
+
+# ── Page config ──────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AlphaLens — Crypto Research",
+    page_title="AlphaLens — Crypto Research Agent",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Theme definitions ─────────────────────────────────────────────────────────────
+THEMES = {
+    "Midnight Indigo": {
+        "bg": "#0b0e14",
+        "sidebar": "#0f1218",
+        "card": "linear-gradient(145deg, #141820 0%, #10141c 100%)",
+        "border": "rgba(124,131,253,0.12)",
+        "border_subtle": "rgba(124,131,253,0.08)",
+        "accent": "#7c83fd",
+        "accent_hover": "#9196ff",
+        "accent_text": "#a5abff",
+        "accent_bg": "linear-gradient(135deg, #7c83fd22 0%, #7c83fd11 100%)",
+        "label": "rgba(255,255,255,0.45)",
+        "chat_bg": "#10141c",
+        "status_bg": "#141820",
+        "btn_bg": "linear-gradient(135deg, #7c83fd 0%, #6366f1 100%)",
+        "btn_hover": "linear-gradient(135deg, #9196ff 0%, #818cf8 100%)",
+        "expander_bg": "#141820",
+    },
+    "Carbon Black": {
+        "bg": "#000000",
+        "sidebar": "#0a0a0a",
+        "card": "linear-gradient(145deg, #111111 0%, #0d0d0d 100%)",
+        "border": "rgba(0,230,118,0.12)",
+        "border_subtle": "rgba(255,255,255,0.06)",
+        "accent": "#00e676",
+        "accent_hover": "#69f0ae",
+        "accent_text": "#00e676",
+        "accent_bg": "rgba(0,230,118,0.08)",
+        "label": "rgba(255,255,255,0.4)",
+        "chat_bg": "#0a0a0a",
+        "status_bg": "#111111",
+        "btn_bg": "linear-gradient(135deg, #00e676 0%, #00c853 100%)",
+        "btn_hover": "linear-gradient(135deg, #69f0ae 0%, #00e676 100%)",
+        "expander_bg": "#111111",
+    },
+    "Glass Frost": {
+        "bg": "#0d1117",
+        "sidebar": "rgba(13,17,23,0.95)",
+        "card": "linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)",
+        "border": "rgba(255,255,255,0.1)",
+        "border_subtle": "rgba(255,255,255,0.06)",
+        "accent": "#58a6ff",
+        "accent_hover": "#79b8ff",
+        "accent_text": "#79b8ff",
+        "accent_bg": "rgba(88,166,255,0.1)",
+        "label": "rgba(255,255,255,0.5)",
+        "chat_bg": "rgba(255,255,255,0.03)",
+        "status_bg": "rgba(255,255,255,0.04)",
+        "btn_bg": "linear-gradient(135deg, #58a6ff 0%, #388bfd 100%)",
+        "btn_hover": "linear-gradient(135deg, #79b8ff 0%, #58a6ff 100%)",
+        "expander_bg": "rgba(255,255,255,0.03)",
+    },
+    "Cyber Neon": {
+        "bg": "#080612",
+        "sidebar": "#0c0a18",
+        "card": "linear-gradient(145deg, #12102a 0%, #0e0c20 100%)",
+        "border": "rgba(0,255,255,0.12)",
+        "border_subtle": "rgba(0,255,255,0.06)",
+        "accent": "#00ffff",
+        "accent_hover": "#66ffff",
+        "accent_text": "#00ffff",
+        "accent_bg": "rgba(0,255,255,0.08)",
+        "label": "rgba(255,255,255,0.45)",
+        "chat_bg": "#0e0c20",
+        "status_bg": "#12102a",
+        "btn_bg": "linear-gradient(135deg, #00ffff 0%, #00cccc 100%)",
+        "btn_hover": "linear-gradient(135deg, #66ffff 0%, #00ffff 100%)",
+        "expander_bg": "#12102a",
+    },
+}
+
+
+def _inject_theme(t: dict) -> None:
+    """Inject CSS for the selected theme."""
+    # Button text needs to be dark on bright accent themes
+    btn_text = "#000" if t["accent"] in ("#00e676", "#00ffff") else "#fff"
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{ background: {t["bg"]}; }}
+        section[data-testid="stSidebar"] {{
+            background: {t["sidebar"]};
+            border-right: 1px solid {t["border_subtle"]};
+        }}
+
+        /* Metric cards */
+        [data-testid="stMetric"] {{
+            background: {t["card"]};
+            border: 1px solid {t["border"]};
+            border-radius: 14px;
+            padding: 18px 22px 14px;
+        }}
+        [data-testid="stMetricLabel"] {{
+            font-size: 0.72rem !important;
+            font-weight: 600 !important;
+            color: {t["label"]} !important;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }}
+        [data-testid="stMetricValue"] {{
+            font-size: 1.55rem !important;
+            font-weight: 700 !important;
+            color: #ffffff !important;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.3px;
+        }}
+        [data-testid="stMetricDelta"] {{
+            font-size: 0.82rem !important;
+            font-weight: 500 !important;
+        }}
+        [data-testid="stMetricDelta"] svg {{ display: none; }}
+
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"] {{
+            gap: 0;
+            background: {t["sidebar"]};
+            border-radius: 12px;
+            padding: 4px;
+            border: 1px solid {t["border_subtle"]};
+        }}
+        .stTabs [data-baseweb="tab"] {{
+            border-radius: 10px;
+            padding: 10px 24px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: rgba(255,255,255,0.5);
+            letter-spacing: 0.2px;
+        }}
+        .stTabs [aria-selected="true"] {{
+            background: {t["accent_bg"]} !important;
+            color: {t["accent_text"]} !important;
+            border-bottom: none !important;
+        }}
+        .stTabs [data-baseweb="tab-highlight"] {{ display: none; }}
+        .stTabs [data-baseweb="tab-border"] {{ display: none; }}
+
+        /* Expanders */
+        .streamlit-expanderHeader {{
+            background: {t["expander_bg"]} !important;
+            border-radius: 10px !important;
+            border: 1px solid {t["border"]} !important;
+            font-weight: 600 !important;
+        }}
+
+        /* Dataframes */
+        [data-testid="stDataFrame"] {{
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid {t["border"]};
+        }}
+
+        /* Dividers */
+        hr {{ border-color: {t["border_subtle"]} !important; }}
+
+        /* Chat */
+        [data-testid="stChatMessage"] {{
+            background: {t["chat_bg"]};
+            border: 1px solid {t["border_subtle"]};
+            border-radius: 14px;
+            padding: 16px 20px;
+        }}
+        .stChatInputContainer {{
+            border-color: {t["border"]} !important;
+            border-radius: 14px !important;
+        }}
+
+        /* Buttons */
+        .stButton > button[kind="primary"] {{
+            background: {t["btn_bg"]};
+            color: {btn_text} !important;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+        }}
+        .stButton > button[kind="primary"]:hover {{
+            background: {t["btn_hover"]};
+        }}
+
+        /* Status badge */
+        .status-bar {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: {t["status_bg"]};
+            border: 1px solid {t["border"]};
+            border-radius: 20px;
+            padding: 6px 16px;
+            font-size: 0.78rem;
+            color: rgba(255,255,255,0.55);
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }}
+        .status-bar .dot {{
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #00e676;
+            box-shadow: 0 0 6px #00e67688;
+            display: inline-block;
+        }}
+        .status-bar .dot.off {{
+            background: #ff1744;
+            box-shadow: 0 0 6px #ff174488;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ── One-time DB init ─────────────────────────────────────────────────────────────
 @st.cache_resource
 def setup_db():
     init_db()
 
+
 setup_db()
+
+# ── Session state defaults ───────────────────────────────────────────────────────
+if "history_loaded" not in st.session_state:
+    st.session_state["history_loaded"] = set()
+if "chat_messages" not in st.session_state:
+    st.session_state["chat_messages"] = []
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 📈 AlphaLens")
-    st.caption("Real-time crypto research · MVP")
+    st.caption("AI-Powered Crypto Research Agent")
     st.divider()
 
     symbols: list[str] = st.multiselect(
@@ -60,29 +310,37 @@ with st.sidebar:
         symbols = ["BTCUSDT"]
 
     interval: str = st.selectbox("Candle interval", ["1m", "3m", "5m"], index=0)
-    lookback: int = st.slider("Candles to display", min_value=20, max_value=500, value=100, step=10)
+    lookback: int = st.slider(
+        "Candles to display", min_value=20, max_value=500, value=100, step=10
+    )
 
     st.divider()
     auto_refresh = st.toggle("Auto-refresh (5 s)", value=True)
-    analyze_btn  = st.button("🤖  Analyze trend with AI", use_container_width=True)
 
     st.divider()
-    st.caption("Data: Binance WebSocket + REST\nAI: GPT-4o")
+    theme_name: str = st.selectbox(
+        "Theme",
+        list(THEMES.keys()),
+        index=0,
+        key="theme_select",
+    )
+
+    st.divider()
+    st.caption("Data: Binance · CoinGecko · DefiLlama\nAI: GPT-4o with tool use")
+
+_inject_theme(THEMES[theme_name])
 
 primary = symbols[0]
 
 # ── Historical data: fetch once per (symbol, interval) ──────────────────────────
-if "history_loaded" not in st.session_state:
-    st.session_state["history_loaded"] = set()
-
 for sym in symbols:
     hist_key = f"hist_{sym}_{interval}"
     if hist_key not in st.session_state["history_loaded"]:
-        with st.spinner(f"Loading 500 historical candles for {sym}…"):
+        with st.spinner(f"Loading historical candles for {sym}…"):
             fetch_historical_klines(sym, interval, limit=500)
         st.session_state["history_loaded"].add(hist_key)
 
-# ── Kline WebSocket streams: one per selected (symbol, interval) ─────────────────
+# ── Kline WebSocket streams ──────────────────────────────────────────────────────
 active_ks = {f"ks_{sym}_{interval}" for sym in symbols}
 
 for k in list(st.session_state.keys()):
@@ -99,7 +357,7 @@ for sym in symbols:
         s.start()
         st.session_state[ks_key] = s
 
-# ── Order book stream: primary symbol only ───────────────────────────────────────
+# ── Order book stream: primary symbol ────────────────────────────────────────────
 ob_key = f"ob_{primary}"
 
 for k in list(st.session_state.keys()):
@@ -114,393 +372,921 @@ if ob_key not in st.session_state:
     obs.start()
     st.session_state[ob_key] = obs
 
-# ── Load kline data + compute indicators for all selected symbols ─────────────────
-all_klines: dict[str, list] = {}
-all_dfs: dict[str, pd.DataFrame] = {}
-
-for sym in symbols:
-    klines = get_klines(sym, interval=interval, limit=lookback)
-    all_klines[sym] = klines
-    if klines:
-        df = pd.DataFrame(
-            klines, columns=["open_time", "open", "high", "low", "close", "volume"]
-        )
-        df["datetime"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-        df = add_indicators(df)
-        all_dfs[sym] = df
-
-# ── Page header ──────────────────────────────────────────────────────────────────
+# ── Header ───────────────────────────────────────────────────────────────────────
 primary_stream = st.session_state.get(f"ks_{primary}_{interval}")
-conn_badge = "🟢 Live" if (primary_stream and primary_stream.is_running) else "🔴 Disconnected"
-
+is_live = primary_stream and primary_stream.is_running
 title = " · ".join(symbols) if len(symbols) > 1 else primary
-st.title(f"📈 {title}")
-st.caption(f"{conn_badge}  ·  {interval} candles  ·  {lookback} loaded  ·  {len(symbols)} stream(s) active")
+st.title(f"{title}")
+dot_cls = "" if is_live else " off"
+status_text = "Live" if is_live else "Disconnected"
+st.markdown(
+    f'<div class="status-bar">'
+    f'<span class="dot{dot_cls}"></span> {status_text}'
+    f" &nbsp;·&nbsp; {interval} candles"
+    f" &nbsp;·&nbsp; {lookback} loaded"
+    f" &nbsp;·&nbsp; {len(symbols)} stream(s)"
+    f"</div>",
+    unsafe_allow_html=True,
+)
 
 # ════════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — CHARTS
+# TABS
 # ════════════════════════════════════════════════════════════════════════════════
 
-if len(symbols) == 1:
-    # ── Single symbol: metrics + candlestick + indicators ────────────────────
-    df = all_dfs.get(primary)
-    if df is None or df.empty:
-        st.info("⏳ Waiting for candle data…")
-        time.sleep(2)
-        st.rerun()
-    else:
-        latest    = df.iloc[-1]
-        earliest  = df.iloc[0]
-        pct       = ((latest["close"] - earliest["close"]) / earliest["close"]) * 100
-        dollar_chg = latest["close"] - earliest["close"]
+tab_dashboard, tab_chat, tab_report, tab_scanner = st.tabs(
+    [
+        "📊 Dashboard",
+        "💬 Research Chat",
+        "📋 Deep Dive",
+        "🎯 Prediction Scanner",
+    ]
+)
 
-        # Metric tiles — price + indicator snapshot
-        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-        c1.metric("Price (USDT)",  f"${latest['close']:,.4f}", f"{dollar_chg:+.4f} ({pct:+.2f}%)")
-        c2.metric("Period High",   f"${df['high'].max():,.4f}")
-        c3.metric("Period Low",    f"${df['low'].min():,.4f}")
-        c4.metric("Volume",        f"{df['volume'].sum():,.0f}")
-        rsi_val = latest.get("rsi")
-        c5.metric("RSI (14)",
-                  f"{rsi_val:.1f}" if rsi_val and not pd.isna(rsi_val) else "—",
-                  "overbought" if (rsi_val and rsi_val > 70) else
-                  "oversold"   if (rsi_val and rsi_val < 30) else "neutral")
-        macd_val = latest.get("macd")
-        sig_val  = latest.get("macd_signal")
-        c6.metric("MACD",
-                  f"{macd_val:.4f}" if macd_val and not pd.isna(macd_val) else "—",
-                  "▲ bullish" if (macd_val and sig_val and macd_val > sig_val) else "▼ bearish")
-        bb_up = latest.get("bb_upper")
-        bb_lo = latest.get("bb_lower")
-        if bb_up and bb_lo and not pd.isna(bb_up):
-            bw   = bb_up - bb_lo
-            bpos = (latest["close"] - bb_lo) / bw * 100 if bw > 0 else 50
-            c7.metric("BB Position", f"{bpos:.0f}%",
-                      "near top" if bpos > 80 else "near bottom" if bpos < 20 else "mid-band")
-        else:
-            c7.metric("BB Position", "—")
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 1 — DASHBOARD (charts + order book)
+# Fragment re-renders every 5s independently — chat and deep dive are untouched.
+# ════════════════════════════════════════════════════════════════════════════════
 
-        # ── Main chart: Candlestick + SMA20 + SMA50 + Bollinger Bands + Volume ──
-        fig = go.Figure()
+with tab_dashboard:
 
-        # Bollinger Bands (fill between upper and lower)
-        fig.add_trace(go.Scatter(
-            x=df["datetime"], y=df["bb_upper"],
-            mode="lines", line=dict(color="rgba(255,200,0,0.3)", width=1),
-            name="BB Upper", showlegend=True,
-        ))
-        fig.add_trace(go.Scatter(
-            x=df["datetime"], y=df["bb_lower"],
-            mode="lines", line=dict(color="rgba(255,200,0,0.3)", width=1),
-            fill="tonexty", fillcolor="rgba(255,200,0,0.05)",
-            name="BB Lower", showlegend=True,
-        ))
-        fig.add_trace(go.Scatter(
-            x=df["datetime"], y=df["bb_mid"],
-            mode="lines", line=dict(color="rgba(255,200,0,0.5)", width=1, dash="dot"),
-            name="BB Mid", showlegend=False,
-        ))
+    @st.fragment(run_every=5 if auto_refresh else None)
+    def _dashboard():
+        from src.database import get_klines
+        from src.indicators import add_indicators
 
-        # Candlesticks
-        fig.add_trace(go.Candlestick(
-            x=df["datetime"],
-            open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-            name="Price",
-            increasing_line_color="#00e676", decreasing_line_color="#ff1744",
-            increasing_fillcolor="#00e676",  decreasing_fillcolor="#ff1744",
-        ))
+        dfs: dict[str, pd.DataFrame] = {}
+        for _s in symbols:
+            _k = get_klines(_s, interval=interval, limit=lookback)
+            if _k:
+                _d = pd.DataFrame(
+                    _k, columns=["open_time", "open", "high", "low", "close", "volume"]
+                )
+                _d["datetime"] = pd.to_datetime(_d["open_time"], unit="ms", utc=True)
+                _d = add_indicators(_d)
+                dfs[_s] = _d
 
-        # Moving averages
-        fig.add_trace(go.Scatter(
-            x=df["datetime"], y=df["sma_20"],
-            mode="lines", line=dict(color="#7c83fd", width=1.5),
-            name="SMA 20",
-        ))
-        fig.add_trace(go.Scatter(
-            x=df["datetime"], y=df["sma_50"],
-            mode="lines", line=dict(color="#ff9800", width=1.5),
-            name="SMA 50",
-        ))
+        if len(symbols) == 1:
+            df = dfs.get(primary)
+            if df is None or df.empty:
+                st.info("⏳ Waiting for candle data…")
+                return
 
-        # Volume bars (secondary y-axis)
-        fig.add_trace(go.Bar(
-            x=df["datetime"], y=df["volume"],
-            name="Volume", yaxis="y2",
-            marker_color=[
-                "rgba(0,230,118,0.2)" if c >= o else "rgba(255,23,68,0.2)"
-                for o, c in zip(df["open"], df["close"])
-            ],
-        ))
-
-        fig.update_layout(
-            template="plotly_dark", height=540,
-            margin=dict(l=0, r=0, t=40, b=0),
-            title=dict(text=f"{primary} · {interval}  |  SMA20  SMA50  Bollinger Bands", font=dict(size=14)),
-            xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
-            yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"),
-            yaxis2=dict(title="Volume", overlaying="y", side="right", showgrid=False),
-            xaxis_rangeslider_visible=False,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)),
-            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # ── Technical indicator charts: RSI + MACD ───────────────────────────
-        with st.expander("📊 Technical Indicators — RSI & MACD", expanded=True):
-            fig_ind = make_subplots(
-                rows=2, cols=1,
-                shared_xaxes=True,
-                row_heights=[0.5, 0.5],
-                vertical_spacing=0.08,
-                subplot_titles=("RSI (14)", "MACD (12, 26, 9)"),
-            )
-
-            # RSI
-            fig_ind.add_trace(go.Scatter(
-                x=df["datetime"], y=df["rsi"],
-                mode="lines", line=dict(color="#7c83fd", width=2), name="RSI",
-            ), row=1, col=1)
-            fig_ind.add_hline(y=70, line_dash="dash", line_color="rgba(255,23,68,0.5)",
-                              annotation_text="Overbought 70", row=1, col=1)
-            fig_ind.add_hline(y=30, line_dash="dash", line_color="rgba(0,230,118,0.5)",
-                              annotation_text="Oversold 30", row=1, col=1)
-            fig_ind.add_hline(y=50, line_dash="dot",  line_color="rgba(255,255,255,0.15)",
-                              row=1, col=1)
-
-            # MACD histogram
-            hist_colors = [
-                "rgba(0,230,118,0.6)" if v >= 0 else "rgba(255,23,68,0.6)"
-                for v in df["macd_hist"].fillna(0)
-            ]
-            fig_ind.add_trace(go.Bar(
-                x=df["datetime"], y=df["macd_hist"],
-                name="Histogram", marker_color=hist_colors, showlegend=True,
-            ), row=2, col=1)
-            fig_ind.add_trace(go.Scatter(
-                x=df["datetime"], y=df["macd"],
-                mode="lines", line=dict(color="#7c83fd", width=2), name="MACD",
-            ), row=2, col=1)
-            fig_ind.add_trace(go.Scatter(
-                x=df["datetime"], y=df["macd_signal"],
-                mode="lines", line=dict(color="#ff9800", width=1.5, dash="dot"), name="Signal",
-            ), row=2, col=1)
-            fig_ind.add_hline(y=0, line_color="rgba(255,255,255,0.15)", row=2, col=1)
-
-            fig_ind.update_layout(
-                template="plotly_dark", height=420,
-                margin=dict(l=0, r=0, t=40, b=0),
-                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)),
-                showlegend=True,
-            )
-            fig_ind.update_yaxes(showgrid=True, gridcolor="#2a2a2a")
-            fig_ind.update_xaxes(showgrid=True, gridcolor="#2a2a2a")
-            st.plotly_chart(fig_ind, use_container_width=True)
-
-else:
-    # ── Multi-symbol: metrics row + normalized comparison + mini charts ────────
-
-    # Metrics: one tile per symbol
-    metric_cols = st.columns(len(symbols))
-    for i, sym in enumerate(symbols):
-        df = all_dfs.get(sym)
-        if df is not None and not df.empty:
-            latest   = df.iloc[-1]
+            latest = df.iloc[-1]
             earliest = df.iloc[0]
             pct = ((latest["close"] - earliest["close"]) / earliest["close"]) * 100
-            metric_cols[i].metric(sym, f"${latest['close']:,.4f}", f"{pct:+.2f}%")
-        else:
-            metric_cols[i].metric(sym, "—", "loading…")
+            dollar_chg = latest["close"] - earliest["close"]
 
-    # Normalized % change comparison chart
-    fig_comp = go.Figure()
-    for i, sym in enumerate(symbols):
-        df = all_dfs.get(sym)
-        if df is not None and not df.empty:
-            base = df["close"].iloc[0]
-            normalized = (df["close"] / base - 1) * 100
-            fig_comp.add_trace(go.Scatter(
-                x=df["datetime"], y=normalized,
-                mode="lines", name=sym,
-                line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
-            ))
-
-    fig_comp.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.15)")
-    fig_comp.update_layout(
-        template="plotly_dark", height=360,
-        margin=dict(l=0, r=0, t=40, b=0),
-        title=dict(text="Relative % Change (all normalized to period start = 0%)", font=dict(size=14)),
-        yaxis=dict(title="% Change", showgrid=True, gridcolor="#2a2a2a", ticksuffix="%"),
-        xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
-        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        hovermode="x unified",
-    )
-    st.plotly_chart(fig_comp, use_container_width=True)
-
-    # Individual mini-candlestick charts in a 2-column grid
-    n_syms = len(symbols)
-    for row_start in range(0, n_syms, 2):
-        cols = st.columns(min(2, n_syms - row_start))
-        for col_idx, sym in enumerate(symbols[row_start : row_start + 2]):
-            df = all_dfs.get(sym)
-            with cols[col_idx]:
-                if df is not None and not df.empty:
-                    fig_mini = go.Figure()
-                    fig_mini.add_trace(go.Candlestick(
-                        x=df["datetime"],
-                        open=df["open"], high=df["high"],
-                        low=df["low"],   close=df["close"],
-                        name=sym, showlegend=False,
-                        increasing_line_color="#00e676", decreasing_line_color="#ff1744",
-                        increasing_fillcolor="#00e676",  decreasing_fillcolor="#ff1744",
-                    ))
-                    fig_mini.update_layout(
-                        template="plotly_dark", height=280,
-                        margin=dict(l=0, r=0, t=30, b=0),
-                        title=dict(text=sym, font=dict(size=13)),
-                        xaxis=dict(showgrid=False, showticklabels=False),
-                        yaxis=dict(showgrid=True, gridcolor="#2a2a2a", tickfont=dict(size=10)),
-                        xaxis_rangeslider_visible=False,
-                        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-                    )
-                    st.plotly_chart(fig_mini, use_container_width=True)
-                else:
-                    st.info(f"⏳ {sym} — waiting for data…")
-
-# ════════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — ORDER BOOK (primary symbol)
-# ════════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-st.markdown(f"### 📖 Order Book — {primary}")
-
-ob_stream: BinanceOrderBookStream = st.session_state[ob_key]
-
-if not ob_stream.book.has_data:
-    st.info("⏳ Waiting for order book data…")
-else:
-    book = ob_stream.book
-    bids, asks = book.snapshot()
-
-    # Spread metrics
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Best Bid",  f"${book.best_bid:,.4f}"   if book.best_bid  else "—")
-    m2.metric("Best Ask",  f"${book.best_ask:,.4f}"   if book.best_ask  else "—")
-    m3.metric("Spread",    f"${book.spread:,.4f}"     if book.spread    else "—")
-    m4.metric("Spread %",  f"{book.spread_pct:.4f}%"  if book.spread_pct else "—")
-
-    # Bid / Ask tables side by side (top 10 levels)
-    top_n = 10
-    bid_df = pd.DataFrame(bids[:top_n], columns=["Price", "Qty"])
-    ask_df = pd.DataFrame(asks[:top_n], columns=["Price", "Qty"])
-    bid_df["Total (USDT)"] = (bid_df["Price"] * bid_df["Qty"]).round(2)
-    ask_df["Total (USDT)"] = (ask_df["Price"] * ask_df["Qty"]).round(2)
-
-    def _green_shade(col):
-        mx = col.max() or 1
-        return [f"background-color: rgba(0,230,118,{v/mx*0.55:.2f})" for v in col]
-
-    def _red_shade(col):
-        mx = col.max() or 1
-        return [f"background-color: rgba(255,23,68,{v/mx*0.45:.2f})" for v in col]
-
-    ob_col1, ob_col2 = st.columns(2)
-    with ob_col1:
-        st.markdown("**Bids 🟢** — buyers")
-        st.dataframe(
-            bid_df.style
-                .format({"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"})
-                .apply(_green_shade, subset=["Total (USDT)"]),
-            use_container_width=True,
-            hide_index=True,
-        )
-    with ob_col2:
-        st.markdown("**Asks 🔴** — sellers")
-        st.dataframe(
-            ask_df.style
-                .format({"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"})
-                .apply(_red_shade, subset=["Total (USDT)"]),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    # Market depth chart (cumulative volume vs price)
-    with st.expander("Market Depth Chart", expanded=False):
-        bid_prices = [b[0] for b in bids]
-        ask_prices = [a[0] for a in asks]
-
-        bid_cum, ask_cum = [], []
-        cum = 0
-        for b in bids:
-            cum += b[1]
-            bid_cum.append(cum)
-        cum = 0
-        for a in asks:
-            cum += a[1]
-            ask_cum.append(cum)
-
-        fig_depth = go.Figure()
-        fig_depth.add_trace(go.Scatter(
-            x=bid_prices, y=bid_cum,
-            mode="lines", name="Bids",
-            line=dict(color="#00e676", width=2),
-            fill="tozeroy", fillcolor="rgba(0,230,118,0.1)",
-        ))
-        fig_depth.add_trace(go.Scatter(
-            x=ask_prices, y=ask_cum,
-            mode="lines", name="Asks",
-            line=dict(color="#ff1744", width=2),
-            fill="tozeroy", fillcolor="rgba(255,23,68,0.1)",
-        ))
-        fig_depth.update_layout(
-            template="plotly_dark", height=300,
-            margin=dict(l=0, r=0, t=20, b=0),
-            xaxis=dict(title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"),
-            yaxis=dict(title="Cumulative Volume", showgrid=True, gridcolor="#2a2a2a"),
-            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
-            legend=dict(orientation="h"),
-        )
-        st.plotly_chart(fig_depth, use_container_width=True)
-
-# ════════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — AI TREND ANALYSIS
-# ════════════════════════════════════════════════════════════════════════════════
-
-st.divider()
-ai_col, _ = st.columns([3, 1])
-
-with ai_col:
-    if analyze_btn:
-        api_key_set = bool(os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key"))
-        if not api_key_set:
-            st.error(
-                "**No OpenAI API key found.**  "
-                "Set `gpt_api_key` in your `.env` file, then restart the app."
+            # Row 1 — price metrics
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric(
+                "Price (USDT)",
+                f"${latest['close']:,.2f}",
+                f"{dollar_chg:+,.2f} ({pct:+.2f}%)",
             )
+            c2.metric("Period High", f"${df['high'].max():,.2f}")
+            c3.metric("Period Low", f"${df['low'].min():,.2f}")
+            c4.metric("Volume", f"{df['volume'].sum():,.0f}")
+
+            # Row 2 — technical indicators
+            rsi_val = latest.get("rsi")
+            macd_val = latest.get("macd")
+            sig_val = latest.get("macd_signal")
+            bb_up = latest.get("bb_upper")
+            bb_lo = latest.get("bb_lower")
+
+            t1, t2, t3 = st.columns(3)
+            t1.metric(
+                "RSI (14)",
+                f"{rsi_val:.1f}" if rsi_val and not pd.isna(rsi_val) else "—",
+                "overbought"
+                if (rsi_val and rsi_val > 70)
+                else "oversold"
+                if (rsi_val and rsi_val < 30)
+                else "neutral",
+            )
+            t2.metric(
+                "MACD",
+                f"{macd_val:.4f}" if macd_val and not pd.isna(macd_val) else "—",
+                "▲ bullish"
+                if (macd_val and sig_val and macd_val > sig_val)
+                else "▼ bearish",
+            )
+            if bb_up and bb_lo and not pd.isna(bb_up):
+                bw = bb_up - bb_lo
+                bpos = (latest["close"] - bb_lo) / bw * 100 if bw > 0 else 50
+                t3.metric(
+                    "BB Position",
+                    f"{bpos:.0f}%",
+                    "near top"
+                    if bpos > 80
+                    else "near bottom"
+                    if bpos < 20
+                    else "mid-band",
+                )
+            else:
+                t3.metric("BB Position", "—")
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=df["datetime"],
+                    y=df["bb_upper"],
+                    mode="lines",
+                    line=dict(color="rgba(255,200,0,0.3)", width=1),
+                    name="BB Upper",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df["datetime"],
+                    y=df["bb_lower"],
+                    mode="lines",
+                    line=dict(color="rgba(255,200,0,0.3)", width=1),
+                    fill="tonexty",
+                    fillcolor="rgba(255,200,0,0.05)",
+                    name="BB Lower",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df["datetime"],
+                    y=df["bb_mid"],
+                    mode="lines",
+                    line=dict(color="rgba(255,200,0,0.5)", width=1, dash="dot"),
+                    name="BB Mid",
+                    showlegend=False,
+                )
+            )
+            fig.add_trace(
+                go.Candlestick(
+                    x=df["datetime"],
+                    open=df["open"],
+                    high=df["high"],
+                    low=df["low"],
+                    close=df["close"],
+                    name="Price",
+                    increasing_line_color="#00e676",
+                    decreasing_line_color="#ff1744",
+                    increasing_fillcolor="#00e676",
+                    decreasing_fillcolor="#ff1744",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df["datetime"],
+                    y=df["sma_20"],
+                    mode="lines",
+                    line=dict(color="#7c83fd", width=1.5),
+                    name="SMA 20",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df["datetime"],
+                    y=df["sma_50"],
+                    mode="lines",
+                    line=dict(color="#ff9800", width=1.5),
+                    name="SMA 50",
+                )
+            )
+            fig.add_trace(
+                go.Bar(
+                    x=df["datetime"],
+                    y=df["volume"],
+                    name="Volume",
+                    yaxis="y2",
+                    marker_color=[
+                        "rgba(0,230,118,0.2)" if c >= o else "rgba(255,23,68,0.2)"
+                        for o, c in zip(df["open"], df["close"])
+                    ],
+                )
+            )
+            fig.update_layout(
+                template="plotly_dark",
+                height=540,
+                margin=dict(l=0, r=0, t=40, b=0),
+                title=dict(
+                    text=f"{primary} · {interval}  |  SMA20  SMA50  BB",
+                    font=dict(size=14),
+                ),
+                xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
+                yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"),
+                yaxis2=dict(
+                    title="Volume", overlaying="y", side="right", showgrid=False
+                ),
+                xaxis_rangeslider_visible=False,
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)
+                ),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, width="stretch")
+
+            with st.expander("📊 Technical Indicators — RSI & MACD", expanded=True):
+                fig_ind = make_subplots(
+                    rows=2,
+                    cols=1,
+                    shared_xaxes=True,
+                    row_heights=[0.5, 0.5],
+                    vertical_spacing=0.08,
+                    subplot_titles=("RSI (14)", "MACD (12, 26, 9)"),
+                )
+                fig_ind.add_trace(
+                    go.Scatter(
+                        x=df["datetime"],
+                        y=df["rsi"],
+                        mode="lines",
+                        line=dict(color="#7c83fd", width=2),
+                        name="RSI",
+                    ),
+                    row=1,
+                    col=1,
+                )
+                fig_ind.add_hline(
+                    y=70,
+                    line_dash="dash",
+                    line_color="rgba(255,23,68,0.5)",
+                    annotation_text="Overbought 70",
+                    row=1,
+                    col=1,
+                )
+                fig_ind.add_hline(
+                    y=30,
+                    line_dash="dash",
+                    line_color="rgba(0,230,118,0.5)",
+                    annotation_text="Oversold 30",
+                    row=1,
+                    col=1,
+                )
+                fig_ind.add_hline(
+                    y=50,
+                    line_dash="dot",
+                    line_color="rgba(255,255,255,0.15)",
+                    row=1,
+                    col=1,
+                )
+                hist_colors = [
+                    "rgba(0,230,118,0.6)" if v >= 0 else "rgba(255,23,68,0.6)"
+                    for v in df["macd_hist"].fillna(0)
+                ]
+                fig_ind.add_trace(
+                    go.Bar(
+                        x=df["datetime"],
+                        y=df["macd_hist"],
+                        name="Histogram",
+                        marker_color=hist_colors,
+                    ),
+                    row=2,
+                    col=1,
+                )
+                fig_ind.add_trace(
+                    go.Scatter(
+                        x=df["datetime"],
+                        y=df["macd"],
+                        mode="lines",
+                        line=dict(color="#7c83fd", width=2),
+                        name="MACD",
+                    ),
+                    row=2,
+                    col=1,
+                )
+                fig_ind.add_trace(
+                    go.Scatter(
+                        x=df["datetime"],
+                        y=df["macd_signal"],
+                        mode="lines",
+                        line=dict(color="#ff9800", width=1.5, dash="dot"),
+                        name="Signal",
+                    ),
+                    row=2,
+                    col=1,
+                )
+                fig_ind.add_hline(
+                    y=0, line_color="rgba(255,255,255,0.15)", row=2, col=1
+                )
+                fig_ind.update_layout(
+                    template="plotly_dark",
+                    height=420,
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    plot_bgcolor="#0e1117",
+                    paper_bgcolor="#0e1117",
+                    legend=dict(
+                        orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)
+                    ),
+                    showlegend=True,
+                )
+                fig_ind.update_yaxes(showgrid=True, gridcolor="#2a2a2a")
+                fig_ind.update_xaxes(showgrid=True, gridcolor="#2a2a2a")
+                st.plotly_chart(fig_ind, width="stretch")
+
         else:
-            klines = all_klines.get(primary, [])
-            with st.spinner(f"GPT-4o is writing your investment brief for {primary}…"):
+            metric_cols = st.columns(len(symbols))
+            for i, sym in enumerate(symbols):
+                df = dfs.get(sym)
+                if df is not None and not df.empty:
+                    latest = df.iloc[-1]
+                    earliest = df.iloc[0]
+                    pct = (
+                        (latest["close"] - earliest["close"]) / earliest["close"]
+                    ) * 100
+                    metric_cols[i].metric(
+                        sym, f"${latest['close']:,.4f}", f"{pct:+.2f}%"
+                    )
+                else:
+                    metric_cols[i].metric(sym, "—", "loading…")
+
+            fig_comp = go.Figure()
+            for i, sym in enumerate(symbols):
+                df = dfs.get(sym)
+                if df is not None and not df.empty:
+                    base = df["close"].iloc[0]
+                    normalized = (df["close"] / base - 1) * 100
+                    fig_comp.add_trace(
+                        go.Scatter(
+                            x=df["datetime"],
+                            y=normalized,
+                            mode="lines",
+                            name=sym,
+                            line=dict(
+                                color=CHART_COLORS[i % len(CHART_COLORS)], width=2
+                            ),
+                        )
+                    )
+            fig_comp.add_hline(
+                y=0, line_dash="dash", line_color="rgba(255,255,255,0.15)"
+            )
+            fig_comp.update_layout(
+                template="plotly_dark",
+                height=360,
+                margin=dict(l=0, r=0, t=40, b=0),
+                title=dict(
+                    text="Relative % Change (normalized to period start = 0%)",
+                    font=dict(size=14),
+                ),
+                yaxis=dict(
+                    title="% Change", showgrid=True, gridcolor="#2a2a2a", ticksuffix="%"
+                ),
+                xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_comp, width="stretch")
+
+            for row_start in range(0, len(symbols), 2):
+                cols = st.columns(min(2, len(symbols) - row_start))
+                for col_idx, sym in enumerate(symbols[row_start : row_start + 2]):
+                    df = dfs.get(sym)
+                    with cols[col_idx]:
+                        if df is not None and not df.empty:
+                            fig_mini = go.Figure()
+                            fig_mini.add_trace(
+                                go.Candlestick(
+                                    x=df["datetime"],
+                                    open=df["open"],
+                                    high=df["high"],
+                                    low=df["low"],
+                                    close=df["close"],
+                                    name=sym,
+                                    showlegend=False,
+                                    increasing_line_color="#00e676",
+                                    decreasing_line_color="#ff1744",
+                                    increasing_fillcolor="#00e676",
+                                    decreasing_fillcolor="#ff1744",
+                                )
+                            )
+                            fig_mini.update_layout(
+                                template="plotly_dark",
+                                height=280,
+                                margin=dict(l=0, r=0, t=30, b=0),
+                                title=dict(text=sym, font=dict(size=13)),
+                                xaxis=dict(showgrid=False, showticklabels=False),
+                                yaxis=dict(
+                                    showgrid=True,
+                                    gridcolor="#2a2a2a",
+                                    tickfont=dict(size=10),
+                                ),
+                                xaxis_rangeslider_visible=False,
+                                plot_bgcolor="#0e1117",
+                                paper_bgcolor="#0e1117",
+                            )
+                            st.plotly_chart(fig_mini, width="stretch")
+                        else:
+                            st.info(f"⏳ {sym} — waiting for data…")
+
+        # ── Order book ───────────────────────────────────────────────────────
+        st.divider()
+        st.markdown(f"### 📖 Order Book — {primary}")
+        ob_stream: BinanceOrderBookStream = st.session_state[ob_key]
+
+        if not ob_stream.book.has_data:
+            st.info("⏳ Waiting for order book data…")
+        else:
+            book = ob_stream.book
+            bids, asks = book.snapshot()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Best Bid", f"${book.best_bid:,.2f}" if book.best_bid else "—")
+            m2.metric("Best Ask", f"${book.best_ask:,.2f}" if book.best_ask else "—")
+            m3.metric("Spread", f"${book.spread:,.2f}" if book.spread else "—")
+            m4.metric("Spread %", f"{book.spread_pct:.4f}%" if book.spread_pct else "—")
+
+            top_n = 10
+            bid_df = pd.DataFrame(bids[:top_n], columns=["Price", "Qty"])
+            ask_df = pd.DataFrame(asks[:top_n], columns=["Price", "Qty"])
+            bid_df["Total (USDT)"] = (bid_df["Price"] * bid_df["Qty"]).round(2)
+            ask_df["Total (USDT)"] = (ask_df["Price"] * ask_df["Qty"]).round(2)
+
+            def _green_shade(col):
+                mx = col.max() or 1
+                return [
+                    f"background-color: rgba(0,230,118,{v / mx * 0.55:.2f})"
+                    for v in col
+                ]
+
+            def _red_shade(col):
+                mx = col.max() or 1
+                return [
+                    f"background-color: rgba(255,23,68,{v / mx * 0.45:.2f})"
+                    for v in col
+                ]
+
+            ob_col1, ob_col2 = st.columns(2)
+            with ob_col1:
+                st.markdown("**Bids 🟢** — buyers")
+                st.dataframe(
+                    bid_df.style.format(
+                        {"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"}
+                    ).apply(_green_shade, subset=["Total (USDT)"]),
+                    width="stretch",
+                    hide_index=True,
+                )
+            with ob_col2:
+                st.markdown("**Asks 🔴** — sellers")
+                st.dataframe(
+                    ask_df.style.format(
+                        {"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"}
+                    ).apply(_red_shade, subset=["Total (USDT)"]),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+            with st.expander("Market Depth Chart", expanded=False):
+                bid_prices = [b[0] for b in bids]
+                ask_prices = [a[0] for a in asks]
+                bid_cum, ask_cum, cum = [], [], 0
+                for b in bids:
+                    cum += b[1]
+                    bid_cum.append(cum)
+                cum = 0
+                for a in asks:
+                    cum += a[1]
+                    ask_cum.append(cum)
+                fig_depth = go.Figure()
+                fig_depth.add_trace(
+                    go.Scatter(
+                        x=bid_prices,
+                        y=bid_cum,
+                        mode="lines",
+                        name="Bids",
+                        line=dict(color="#00e676", width=2),
+                        fill="tozeroy",
+                        fillcolor="rgba(0,230,118,0.1)",
+                    )
+                )
+                fig_depth.add_trace(
+                    go.Scatter(
+                        x=ask_prices,
+                        y=ask_cum,
+                        mode="lines",
+                        name="Asks",
+                        line=dict(color="#ff1744", width=2),
+                        fill="tozeroy",
+                        fillcolor="rgba(255,23,68,0.1)",
+                    )
+                )
+                fig_depth.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    margin=dict(l=0, r=0, t=20, b=0),
+                    xaxis=dict(
+                        title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"
+                    ),
+                    yaxis=dict(
+                        title="Cumulative Volume", showgrid=True, gridcolor="#2a2a2a"
+                    ),
+                    plot_bgcolor="#0e1117",
+                    paper_bgcolor="#0e1117",
+                    legend=dict(orientation="h"),
+                )
+                st.plotly_chart(fig_depth, width="stretch")
+
+    _dashboard()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 2 — RESEARCH CHAT
+# ════════════════════════════════════════════════════════════════════════════════
+
+with tab_chat:
+    # Display chat history
+    if not st.session_state["chat_messages"]:
+        with st.chat_message("assistant"):
+            st.markdown(
+                "**Welcome to AlphaLens Research Chat.**\n\n"
+                "Ask me anything about crypto — I'll fetch real-time data and give you "
+                "a sourced answer.\n\n"
+                "Try:\n"
+                '- *"What\'s happening with Bitcoin right now?"*\n'
+                '- *"Is SOL overvalued compared to ETH?"*\n'
+                '- *"What are the risks of holding AVAX?"*\n'
+            )
+
+    for msg in st.session_state["chat_messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Chat input
+    if prompt := st.chat_input("Ask about any crypto…"):
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
+        if not api_key:
+            st.error("No OpenAI API key. Set `gpt_api_key` in `.env` and restart.")
+        else:
+            st.session_state["chat_messages"].append(
+                {"role": "user", "content": prompt}
+            )
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                with st.status("🔍 Researching…", expanded=True) as status:
+
+                    def _on_tool(name: str, args: dict) -> None:
+                        sym = args.get("symbol", "")
+                        label = TOOL_LABELS.get(name, name)
+                        status.write(f"{label} for **{sym}**…")
+
+                    # Pass last 10 messages as context for follow-ups
+                    history = [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in st.session_state["chat_messages"][-10:]
+                    ]
+
+                    try:
+                        response, tool_log = run_agent(
+                            prompt,
+                            history=history[
+                                :-1
+                            ],  # exclude the message we just appended
+                            on_tool_call=_on_tool,
+                        )
+                    except Exception as e:
+                        response = f"Error: {e}"
+                        tool_log = []
+
+                    if tool_log:
+                        sources = sorted(
+                            set(
+                                t["result"]["source"]
+                                for t in tool_log
+                                if isinstance(t.get("result"), dict)
+                                and "source" in t["result"]
+                            )
+                        )
+                        status.update(
+                            label=f"✅ Sourced from {', '.join(sources)}",
+                            state="complete",
+                            expanded=False,
+                        )
+                    else:
+                        status.update(label="✅ Done", state="complete", expanded=False)
+
+                st.markdown(response)
+
+            st.session_state["chat_messages"].append(
+                {"role": "assistant", "content": response}
+            )
+            st.rerun()
+
+    # Clear chat button
+    if st.session_state["chat_messages"]:
+        if st.button("🗑️ Clear chat", key="clear_chat"):
+            st.session_state["chat_messages"] = []
+            st.rerun()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 3 — DEEP DIVE REPORT
+# ════════════════════════════════════════════════════════════════════════════════
+
+with tab_report:
+    st.markdown("### 📋 Deep Dive Research Report")
+    st.caption(
+        "Comprehensive multi-source analysis — CoinGecko · DefiLlama · Binance Futures · Technical Analysis"
+    )
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        report_symbol = st.selectbox("Select token", DEEP_DIVE_TOKENS, index=1)
+    with col2:
+        st.markdown("")  # spacing
+        generate_btn = st.button("🔍 Generate Report", width="stretch", type="primary")
+
+    if generate_btn:
+        api_key = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
+        if not api_key:
+            st.error("No OpenAI API key. Set `gpt_api_key` in `.env` and restart.")
+        else:
+            with st.status(f"🔍 Researching {report_symbol}…", expanded=True) as status:
+
+                def _on_tool_dd(name: str, args: dict) -> None:
+                    sym = args.get("symbol", report_symbol)
+                    label = TOOL_LABELS.get(name, name)
+                    status.write(f"{label} for **{sym}**…")
+
                 try:
-                    summary = summarize_trend(primary, klines, interval=interval)
-                    st.session_state["ai_summary"]  = summary
-                    st.session_state["ai_symbol"]   = primary
-                    st.session_state["ai_candles"]  = len(klines)
-                    st.session_state["ai_interval"] = interval
-                except Exception as exc:
-                    st.error(f"LLM error: {exc}")
+                    report_text, tool_log = deep_dive(
+                        report_symbol, on_tool_call=_on_tool_dd
+                    )
+                except Exception as e:
+                    report_text = f"Error generating report: {e}"
+                    tool_log = []
 
-    if "ai_summary" in st.session_state:
-        st.markdown("### 🤖 Investment Brief")
-        st.caption(
-            f"Symbol: {st.session_state['ai_symbol']}  ·  "
-            f"Interval: {st.session_state.get('ai_interval', interval)}  ·  "
-            f"{st.session_state['ai_candles']} candles  ·  "
-            f"Model: gpt-4o  ·  Includes RSI · MACD · MA · Bollinger Bands"
-        )
-        st.markdown(st.session_state["ai_summary"])
+                if tool_log:
+                    sources = sorted(
+                        set(
+                            t["result"]["source"]
+                            for t in tool_log
+                            if isinstance(t.get("result"), dict)
+                            and "source" in t["result"]
+                        )
+                    )
+                    status.update(
+                        label=f"✅ Report complete — data from {', '.join(sources)}",
+                        state="complete",
+                        expanded=False,
+                    )
+                else:
+                    status.update(
+                        label="✅ Report complete", state="complete", expanded=False
+                    )
 
-# ── Auto-refresh ──────────────────────────────────────────────────────────────────
-if auto_refresh:
-    time.sleep(5)
-    st.rerun()
+            st.session_state["last_report"] = report_text
+            st.session_state["last_report_symbol"] = report_symbol
+
+    # Show last generated report (persists across reruns)
+    if "last_report" in st.session_state:
+        st.divider()
+        st.caption(f"Report for **{st.session_state['last_report_symbol']}**")
+        st.markdown(st.session_state["last_report"])
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB 4 — LIVE PREDICTION MARKETS
+# ════════════════════════════════════════════════════════════════════════════════
+
+with tab_scanner:
+    st.markdown("### 🎯 Live Prediction Markets")
+    st.caption("Auto-refreshing every 30s · Polymarket · Real-time Binance prices")
+
+    if "mkt_history" not in st.session_state:
+        st.session_state["mkt_history"] = {}
+
+    def _fmt_time(hours: float) -> str:
+        if hours <= 0:
+            return "Expired"
+        if hours < 1:
+            return f"{int(hours * 60)}m left"
+        if hours < 24:
+            return f"{int(hours)}h {int((hours % 1) * 60)}m left"
+        d = int(hours / 24)
+        h = int(hours % 24)
+        return f"{d}d {h}h left"
+
+    def _fmt_vol(v: float) -> str:
+        if v >= 1_000_000:
+            return f"${v / 1_000_000:.1f}M"
+        if v >= 1_000:
+            return f"${v / 1_000:.0f}K"
+        return f"${v:.0f}"
+
+    @st.fragment(run_every=30 if auto_refresh else None)
+    def _live_markets():
+        from datetime import datetime, timezone
+        from src.polymarket import fetch_price_history
+
+        try:
+            opps, arbs = scan_markets(
+                interval=interval, edge_threshold=0, on_progress=None
+            )
+        except Exception:
+            opps, arbs = [], []
+
+        if not opps:
+            st.info(
+                "No crypto prediction markets found right now. "
+                "Markets may be inactive or APIs temporarily unreachable."
+            )
+            return
+
+        # Track price history per market
+        now = datetime.now(timezone.utc)
+        for opp in opps:
+            key = opp["id"] or opp["question"][:60]
+            if key not in st.session_state["mkt_history"]:
+                # Seed with Polymarket CLOB history if available
+                seed: list[tuple[float, float]] = []
+                tid = opp.get("clob_token_id")
+                if tid:
+                    raw = fetch_price_history(tid, interval="1w", fidelity=40)
+                    seed = [(t, p * 100) for t, p in raw]
+                st.session_state["mkt_history"][key] = seed
+            st.session_state["mkt_history"][key].append(
+                (now.timestamp(), opp["market_odds"])
+            )
+            st.session_state["mkt_history"][key] = st.session_state["mkt_history"][key][
+                -120:
+            ]
+
+        # ── Arbitrage alerts ─────────────────────────────────────────────
+        if arbs:
+            for arb in arbs:
+                t = arb.get("threshold")
+                t_str = f"${t:,.0f}" if t else ""
+                st.success(
+                    f"**ARBITRAGE** {arb['symbol'].replace('USDT', '')} {t_str} — "
+                    f"{arb['action']} → **{arb['guaranteed_profit']:.1f}¢ guaranteed profit**"
+                )
+
+        # ── Live Market cards — edge > 0.1% and volume > $500 ────────
+        visible = [
+            o
+            for o in opps
+            if o.get("volume", 0) >= 500
+            and (abs(o["edge"]) > 0.1 or not o.get("threshold"))
+        ]
+
+        st.markdown(f"#### Live Markets ({len(visible)})")
+        for row_start in range(0, len(visible), 2):
+            cols = st.columns(2)
+            for col_idx, opp in enumerate(visible[row_start : row_start + 2]):
+                with cols[col_idx]:
+                    _render_market_card(opp)
+
+        # ── Strategy Signals ─────────────────────────────────────────────
+        tracked = list({o["symbol"] for o in opps})
+        strat_signals = run_all_strategies(tracked, interval)
+
+        if strat_signals:
+            st.divider()
+            st.markdown("#### Strategy Signals")
+            for row_start in range(0, len(strat_signals), 3):
+                scols = st.columns(min(3, len(strat_signals) - row_start))
+                for ci, sig in enumerate(strat_signals[row_start : row_start + 3]):
+                    with scols[ci]:
+                        d = sig["direction"]
+                        icon = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(
+                            d, "⚪"
+                        )
+                        with st.container(border=True):
+                            st.markdown(
+                                f"{icon} **{sig['strategy']}** — "
+                                f"{sig['symbol'].replace('USDT', '')}"
+                            )
+                            st.metric(
+                                "Strength", f"{sig['strength']}%", sig["direction"]
+                            )
+                            st.caption(sig["prediction"])
+                            for detail in sig["details"][:3]:
+                                st.caption(f"· {detail}")
+
+    def _market_url(opp: dict) -> str:
+        if opp["platform"] == "Polymarket":
+            slug = opp.get("slug") or opp.get("id", "")
+            return f"https://polymarket.com/event/{slug}"
+
+    def _render_market_card(opp: dict) -> None:
+        edge_val = opp["edge"]
+        odds = opp["market_odds"]
+        odds_color = "#00e676" if odds >= 50 else "#ff1744"
+        url = _market_url(opp)
+
+        # Platform badge styling
+        if opp["platform"] == "Polymarket":
+            badge_color = "#4a6cf7"
+            badge_icon = "◆"
+        else:
+            badge_color = "#00b4d8"
+            badge_icon = "◆"
+
+        with st.container(border=True):
+            # Question (clickable)
+            st.markdown(
+                f'<a href="{url}" target="_blank" style="color: inherit; text-decoration: none;">'
+                f'<span style="font-weight: 600; font-size: 0.92rem; line-height: 1.4;">'
+                f"{opp['question']}</span></a>",
+                unsafe_allow_html=True,
+            )
+
+            # Big chance % + edge badge
+            if abs(edge_val) >= 1:
+                e_color = "#00e676" if edge_val > 0 else "#ff1744"
+                e_label = opp["action"]
+                edge_html = (
+                    f'<span style="background:{e_color}22; color:{e_color}; '
+                    f"padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
+                    f'font-weight: 600; margin-left: 12px;">'
+                    f"{edge_val:+.1f}% {e_label}</span>"
+                )
+            elif opp.get("threshold"):
+                edge_html = (
+                    '<span style="background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.4); '
+                    "padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
+                    'font-weight: 500; margin-left: 12px;">~0% edge</span>'
+                )
+            else:
+                edge_html = (
+                    '<span style="background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.35); '
+                    "padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
+                    'font-weight: 500; margin-left: 12px;">no model</span>'
+                )
+
+            st.markdown(
+                f'<div style="margin: 8px 0 4px;">'
+                f'<span style="font-size: 1.8rem; font-weight: 700; color: {odds_color};">'
+                f"{odds:.0f}%</span>"
+                f'<span style="font-size: 0.82rem; color: rgba(255,255,255,0.45); '
+                f'margin-left: 6px; font-weight: 500;">Chance</span>'
+                f"{edge_html}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Sparkline
+            key = opp["id"] or opp["question"][:60]
+            history = st.session_state.get("mkt_history", {}).get(key, [])
+            if len(history) >= 2:
+                from datetime import datetime, timezone
+
+                times = [datetime.fromtimestamp(t, tz=timezone.utc) for t, _ in history]
+                prices = [p for _, p in history]
+                first_p, last_p = prices[0], prices[-1]
+                line_color = "#00e676" if last_p >= first_p else "#ff1744"
+                fill_color = (
+                    "rgba(0,230,118,0.08)"
+                    if last_p >= first_p
+                    else "rgba(255,23,68,0.08)"
+                )
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=times,
+                        y=prices,
+                        mode="lines",
+                        line=dict(color=line_color, width=2),
+                        fill="tozeroy",
+                        fillcolor=fill_color,
+                        showlegend=False,
+                    )
+                )
+                fig.update_layout(
+                    height=65,
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    xaxis=dict(visible=False),
+                    yaxis=dict(visible=False),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig, width="stretch")
+
+            # Footer row: vol + time left + price | platform watermark
+            st.markdown(
+                f'<div style="display: flex; justify-content: space-between; '
+                f"align-items: center; margin-top: 6px; padding-top: 8px; "
+                f'border-top: 1px solid rgba(255,255,255,0.06);">'
+                # Left side — stats
+                f'<div style="display: flex; gap: 14px; font-size: 0.75rem; '
+                f'color: rgba(255,255,255,0.4); font-weight: 500;">'
+                f"<span>${opp['current_price']:,.2f}</span>"
+                f"<span>{_fmt_vol(opp['volume'])} VOL</span>"
+                f"<span>{_fmt_time(opp['hours_left'])}</span>"
+                f"</div>"
+                # Right side — platform watermark
+                f'<a href="{url}" target="_blank" style="text-decoration: none;">'
+                f'<span style="color: {badge_color}; font-size: 0.78rem; font-weight: 600; '
+                f'letter-spacing: 0.3px;">'
+                f"{badge_icon} {opp['platform']}</span></a>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Signals line (only for markets with model estimates)
+            if opp["signals"]:
+                threshold_str = (
+                    f"${opp['threshold']:,.0f}" if opp.get("threshold") else ""
+                )
+                st.caption(
+                    f"{threshold_str} target · "
+                    + " · ".join(opp["signals"])
+                    + f" · {opp['confidence']}% confidence"
+                )
+
+    _live_markets()

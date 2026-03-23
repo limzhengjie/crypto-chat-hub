@@ -1,78 +1,64 @@
 # AlphaLens MVP
 
-> Real-time crypto research tool — Binance live data → technical analysis → GPT-4o investment brief.
+> Real-time crypto research agent — Binance live data, technical analysis, GPT-4o research chat, and Polymarket prediction market scanner with edge detection.
 
 ---
 
 ## What it does
 
-AlphaLens streams live market data from Binance, computes technical indicators, plots interactive charts, and on demand generates an institutional-grade investment brief using GPT-4o — all grounded in real numbers, no hallucination.
+AlphaLens streams live market data from Binance, computes technical indicators, plots interactive charts, runs a GPT-4o research agent, and scans Polymarket for mispriced crypto prediction markets — all grounded in real numbers.
+
+### Tabs
+
+| Tab | What it does |
+|-----|-------------|
+| **Dashboard** | Live candlestick charts, RSI/MACD panels, Bollinger Bands, order book depth |
+| **Research Chat** | Ask anything about crypto — agent fetches from CoinGecko, DefiLlama, Binance Futures |
+| **Deep Dive** | One-click comprehensive multi-source report for any token |
+| **Prediction Scanner** | Live Polymarket feed with GBM probability model, strategy signals, edge detection |
 
 ---
 
-## Full Project Flow
+## Prediction Scanner
+
+The scanner fetches active crypto prediction markets from Polymarket, matches them to Binance price data, and runs a probability model to find mispriced contracts.
+
+### How it works
+
+1. **Fetch** — Paginates through Polymarket's Gamma API for all active crypto markets
+2. **Backfill** — Auto-fetches 500 candles from Binance for any symbol encountered
+3. **Estimate** — GBM (geometric Brownian motion) probability model using annualized volatility + indicator adjustments (RSI, MACD, funding rate)
+4. **Filter** — Shows markets with edge > 0.1% and volume > $500
+
+### Strategy Signals
+
+| Strategy | Signal | Data Sources |
+|----------|--------|-------------|
+| **Liquidation Cascade** | Overleveraged longs/shorts via extreme funding + OI | Binance Futures |
+| **Momentum Regime** | RSI + MACD + SMA alignment (3+ signals agree) | Binance candles |
+| **TVL Divergence** | Price vs DeFi capital flows divergence | CoinGecko + DefiLlama |
+| **Volatility Squeeze** | Bollinger Band width at minimum → breakout imminent | Binance candles |
+
+---
+
+## Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  STARTUP  (once per symbol/interval pair per session)           │
-│                                                                 │
-│  Binance REST API  ──►  SQLite (500 historical candles)         │
-│  GET /api/v3/klines       backfill via src/history.py           │
-└─────────────────────────────────────────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  LIVE STREAMING  (continuous, background daemon threads)        │
-│                                                                 │
-│  Binance WS  ──►  src/ws_client.py  ──►  SQLite upsert         │
-│  kline stream       BinanceKlineStream    OHLCV per candle      │
-│  (per symbol)       one thread/symbol     live candle updated   │
-│                                           in-place each tick    │
-│                                                                 │
-│  Binance WS  ──►  src/orderbook.py  ──►  in-memory OrderBook   │
-│  depth20 stream     BinanceOrderBook      top 20 bid/ask        │
-│  (primary symbol)   Stream               updated every 1s      │
-└─────────────────────────────────────────────────────────────────┘
-                    │
-                    ▼  (every 5 seconds via st.rerun)
-┌─────────────────────────────────────────────────────────────────┐
-│  STREAMLIT DASHBOARD  (app.py)                                  │
-│                                                                 │
-│  SQLite  ──►  src/indicators.py  ──►  Plotly charts            │
-│  get_klines()   add_indicators()       candlestick + MAs        │
-│                 SMA 20/50              Bollinger Bands           │
-│                 EMA 12/26             RSI panel                 │
-│                 Bollinger Bands       MACD panel                │
-│                 RSI (14)              volume bars               │
-│                 MACD (12,26,9)                                  │
-│                                                                 │
-│  OrderBook  ──►  bid/ask tables  +  market depth chart         │
-│                  spread, spread %                               │
-└─────────────────────────────────────────────────────────────────┘
-                    │
-                    ▼  (on button click only)
-┌─────────────────────────────────────────────────────────────────┐
-│  AI INVESTMENT BRIEF  (src/llm_summary.py)                      │
-│                                                                 │
-│  klines + indicators  ──►  src/prompts/trend_analysis.py       │
-│                             SYSTEM_PROMPT  (quant analyst role) │
-│                             build_user_prompt()                 │
-│                             price stats + indicator readings    │
-│                             last 20 candles with RSI per row    │
-│                                   │                            │
-│                                   ▼                            │
-│                            GPT-4o  (via src/client.py)         │
-│                            GPTClient + RateLimiter             │
-│                                   │                            │
-│                                   ▼                            │
-│                      6-section investment brief:               │
-│                      1. Market Assessment                       │
-│                      2. Technical Signal Summary               │
-│                      3. Investment Thesis (bull vs bear)       │
-│                      4. Trade Setup (entry / target / stop)    │
-│                      5. Risk Assessment                        │
-│                      6. Plain-English Verdict                  │
-└─────────────────────────────────────────────────────────────────┘
+Binance REST API  →  SQLite (500 historical candles per symbol)
+        │
+        ▼
+Binance WebSocket  →  Live kline + order book streams  →  SQLite
+        │
+        ▼
+Streamlit Dashboard  ←  indicators.py (SMA, EMA, BB, RSI, MACD)
+        │
+        ▼
+Polymarket Gamma API  →  scanner.py  →  probability.py (GBM model)
+        │                                     │
+        ▼                                     ▼
+Live prediction market cards       Strategy signals (4 strategies)
+with sparklines, edge badges,      from Binance Futures, CoinGecko,
+platform links, volume, countdown  DefiLlama
 ```
 
 ---
@@ -82,79 +68,20 @@ AlphaLens streams live market data from Binance, computes technical indicators, 
 - Python 3.9+
 - An [OpenAI API key](https://platform.openai.com/api-keys) with GPT-4o access
 
-No Binance API key required — all market data endpoints used are public.
+No Binance or Polymarket API keys required — all endpoints used are public.
 
 ---
 
 ## Setup
 
-### 1. Navigate to the project
-
 ```bash
 cd alphalens-mvp
-```
-
-### 2. Create a virtual environment
-
-```bash
 python3 -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # fill in your OpenAI key
+streamlit run app.py   # opens at http://localhost:8501
 ```
-
-### 3. Install dependencies
-
-```bash
-python -m pip install -r requirements.txt
-python3 -m pip install -r requirements.txt
-
-
-### 4. Add your OpenAI API key
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and set your key — **no spaces around `=`**:
-
-```
-gpt_api_key=sk-proj-...
-```
-
----
-
-## Run
-
-```bash
-streamlit run app.py
-python -m streamlit run app.py
-python3 -m streamlit run app.py
-```
-
-Opens at **http://localhost:8501**.
-
----
-
-## UI Controls
-
-| Control | What it does |
-|---------|-------------|
-| **Assets** multiselect | Stream 1–4 symbols simultaneously |
-| **Candle interval** | Switch between 1m / 3m / 5m |
-| **Candles to display** | How many candles to show (20–500) |
-| **Auto-refresh toggle** | Redraws charts from DB every 5 s |
-| **Analyze trend with AI** | Generates full GPT-4o investment brief |
-
----
-
-## Charts
-
-| Chart | What it shows |
-|-------|-------------|
-| **Candlestick** | OHLC price with SMA 20, SMA 50, Bollinger Bands, volume bars |
-| **RSI panel** | 14-period RSI with overbought (70) / oversold (30) lines |
-| **MACD panel** | MACD line, signal line, histogram (green = bullish, red = bearish) |
-| **Comparison chart** | Normalised % change from period start across all selected symbols |
-| **Order book** | Live top-10 bid/ask table + market depth chart for primary symbol |
 
 ---
 
@@ -162,33 +89,23 @@ Opens at **http://localhost:8501**.
 
 ```
 alphalens-mvp/
-├── app.py                        Streamlit entry point
+├── app.py                  Streamlit entry point (dashboard + scanner UI)
 ├── requirements.txt
-├── .env                          API key (git-ignored)
 ├── .env.example
-├── .gitignore
 └── src/
-    ├── __init__.py
-    ├── client.py                 GPTClient + RateLimiter (OpenAI wrapper)
-    ├── database.py               SQLite schema, upsert, queries
-    ├── history.py                Binance REST → historical kline backfill
-    ├── ws_client.py              Binance WebSocket kline stream → SQLite
-    ├── orderbook.py              Binance WebSocket depth stream → in-memory book
-    ├── indicators.py             SMA, EMA, Bollinger Bands, RSI, MACD
-    ├── llm_summary.py            Data prep → prompt → GPT-4o → investment brief
+    ├── database.py         SQLite schema, upsert, queries
+    ├── history.py          Binance REST → historical kline backfill
+    ├── ws_client.py        Binance WebSocket kline stream → SQLite
+    ├── orderbook.py        Binance WebSocket depth stream → in-memory book
+    ├── indicators.py       SMA, EMA, Bollinger Bands, RSI, MACD
+    ├── agent.py            GPT-4o research agent with tool use
+    ├── tools.py            Data-fetching tools (CoinGecko, DefiLlama, Binance Futures)
+    ├── client.py           GPTClient + RateLimiter (OpenAI wrapper)
+    ├── llm_summary.py      Data prep → prompt → GPT-4o → investment brief
+    ├── polymarket.py       Polymarket Gamma API client + CLOB price history
+    ├── probability.py      GBM probability estimation engine
+    ├── scanner.py          Market scanner — fetch, match, estimate, filter
+    ├── strategies.py       Trading strategy signals (4 strategies)
     └── prompts/
-        ├── __init__.py
-        └── trend_analysis.py     SYSTEM_PROMPT + build_user_prompt()
+        └── trend_analysis.py
 ```
-
----
-
-## Troubleshooting
-
-| Error | Likely cause | Fix |
-|-------|-------------|-----|
-| `AuthenticationError` | Wrong or expired API key | Check `.env`, no spaces around `=` |
-| `PermissionDeniedError` | Key lacks GPT-4o access | Enable billing or use `gpt-4o-mini` in `src/llm_summary.py` |
-| `RateLimitError` | Quota exhausted | Check usage at platform.openai.com |
-| Chart empty on startup | DB not yet populated | Wait for the history spinner to finish |
-| Order book shows `—` | Depth stream still connecting | Wait a few seconds, auto-refreshes |
