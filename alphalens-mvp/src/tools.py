@@ -16,6 +16,7 @@ import requests
 from src.database import get_klines
 from src.history import fetch_historical_klines
 from src.indicators import add_indicators, indicator_summary
+from src.polymarket import fetch_crypto_markets
 
 # ── Symbol → external ID mappings ───────────────────────────────────────────────
 
@@ -239,7 +240,41 @@ def get_technical_analysis(
     }
 
 
-# ── OpenAI function-calling definitions ──────────────────────────────────────────
+def get_prediction_markets(symbol: str) -> dict:
+    """Active Polymarket prediction markets for a crypto symbol."""
+    target = _sym(symbol) + "USDT"
+    try:
+        markets = fetch_crypto_markets()
+    except Exception as e:
+        return {"error": str(e), "source": "Polymarket"}
+
+    relevant = [m for m in markets if m.get("symbol") == target]
+    if not relevant:
+        return {
+            "source": "Polymarket",
+            "symbol": symbol,
+            "markets": [],
+            "message": f"No active prediction markets found for {symbol}.",
+        }
+
+    return {
+        "source": "Polymarket",
+        "symbol": symbol,
+        "market_count": len(relevant),
+        "markets": [
+            {
+                "question": m["question"],
+                "yes_probability_pct": round(m["yes_price"] * 100, 1),
+                "no_probability_pct": round(m["no_price"] * 100, 1),
+                "volume_usd": round(m["volume"], 0),
+                "liquidity_usd": round(m["liquidity"], 0),
+                "expires": str(m["expiry"]),
+                "url": f"https://polymarket.com/event/{m['slug']}",
+            }
+            for m in relevant[:8]
+        ],
+    }
+
 
 TOOL_DEFINITIONS = [
     {
@@ -253,10 +288,7 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Crypto symbol, e.g. BTC, ETH, SOL",
-                    },
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH, SOL"},
                 },
                 "required": ["symbol"],
             },
@@ -273,10 +305,7 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Crypto symbol, e.g. ETH, SOL, AVAX",
-                    },
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. ETH, SOL, AVAX"},
                 },
                 "required": ["symbol"],
             },
@@ -294,10 +323,7 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Crypto symbol, e.g. BTC, ETH",
-                    },
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
                 },
                 "required": ["symbol"],
             },
@@ -311,10 +337,7 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Crypto symbol, e.g. BTC, ETH",
-                    },
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
                 },
                 "required": ["symbol"],
             },
@@ -331,19 +354,27 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {
-                        "type": "string",
-                        "description": "Crypto symbol, e.g. BTC, ETH",
-                    },
-                    "interval": {
-                        "type": "string",
-                        "enum": ["1m", "3m", "5m"],
-                        "description": "Candle interval (default 1m)",
-                    },
-                    "lookback": {
-                        "type": "integer",
-                        "description": "Number of candles to analyze (default 100)",
-                    },
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
+                    "interval": {"type": "string", "enum": ["1m", "3m", "5m"], "description": "Candle interval"},
+                    "lookback": {"type": "integer", "description": "Number of candles to analyze"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_prediction_markets",
+            "description": (
+                "Get active Polymarket prediction markets for a crypto symbol. "
+                "Returns crowd-sourced probability estimates for price targets and events. "
+                "Source: Polymarket."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH, SOL"},
                 },
                 "required": ["symbol"],
             },
@@ -351,10 +382,13 @@ TOOL_DEFINITIONS = [
     },
 ]
 
+# ── Tool dispatch ─────────────────────────────────────────────────────────────────
+
 TOOL_DISPATCH = {
     "get_market_data": get_market_data,
     "get_tvl": get_tvl,
     "get_funding_rate": get_funding_rate,
     "get_open_interest": get_open_interest,
     "get_technical_analysis": get_technical_analysis,
+    "get_prediction_markets": get_prediction_markets,
 }

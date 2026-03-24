@@ -16,18 +16,28 @@ from openai import OpenAI
 from src.tools import TOOL_DEFINITIONS, TOOL_DISPATCH
 
 SYSTEM_PROMPT = """\
-You are AlphaLens, an institutional-grade crypto research agent with real-time data access.
+You are AlphaLens, an institutional-grade crypto research agent built for self-directed \
+retail investors who want clarity without noise.
 
-You MUST call tools to get data before making any claims. Never guess or hallucinate numbers.
+You have access to real-time data tools. You MUST call tools before making any claims. \
+Never guess or hallucinate numbers.
+
+Available tools:
+- get_market_data       → price, market cap, rank, 24h/7d/30d changes, ATH, supply [CoinGecko]
+- get_tvl               → DeFi TVL for blockchain ecosystems [DefiLlama]
+- get_funding_rate      → perpetual futures funding rate — is the market overleveraged? [Binance]
+- get_open_interest     → futures open interest — positioning size [Binance]
+- get_technical_analysis → RSI, MACD, Bollinger Bands, moving averages [Binance live]
+- get_prediction_markets → crowd-sourced probability markets for price events [Polymarket]
 
 Rules:
-- Cite your source in [brackets] after every data point: "ETH is #2 by market cap [CoinGecko]"
-- Separate observations (what the data shows) from interpretation (what it means)
-- If a tool returns an error, say so — never fabricate data to fill the gap
-- For investment questions, present both bull and bear case
-- End substantive analyses with a risk level (Low / Medium / High)
-- Be direct and concise — lead with the answer, then support with data
-- You are a research tool, not a financial advisor\
+- Cite source in [brackets] after every data point: "BTC is at $67,200 [Binance]"
+- Separate what the data shows from your interpretation
+- If a tool returns an error, say so — never fabricate data
+- For investment questions, always present both bull and bear case
+- End every substantive analysis with a Risk Level: Low / Medium / High
+- Lead with the answer, then support with data — retail investors are busy
+- You are a research tool, not a licensed financial advisor\
 """
 
 DEEP_DIVE_PROMPT = """\
@@ -70,9 +80,20 @@ Cite [Source] after every number.\
 """
 
 
-def _get_client() -> OpenAI:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
-    return OpenAI(api_key=api_key)
+def _get_client() -> tuple[OpenAI, str]:
+    """Return (client, model_name) — prefers Gemini if key is present."""
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    openai_key  = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
+
+    if gemini_key:
+        client = OpenAI(
+            api_key=gemini_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        return client, "gemini-2.0-flash"
+
+    client = OpenAI(api_key=openai_key)
+    return client, "gpt-4o"
 
 
 def run_agent(
@@ -88,7 +109,7 @@ def run_agent(
     tool_log: list of {"tool": name, "args": {}, "result": {}}.
     on_tool_call: optional callback fired before each tool executes (for UI progress).
     """
-    client = _get_client()
+    client, model = _get_client()
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if history:
@@ -99,7 +120,7 @@ def run_agent(
 
     for _ in range(max_rounds):
         resp = client.chat.completions.create(
-            model="gpt-4o",
+            model=model,
             messages=messages,
             tools=TOOL_DEFINITIONS,
             temperature=0,
