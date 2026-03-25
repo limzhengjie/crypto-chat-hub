@@ -21,9 +21,7 @@ from src.database import init_db
 from src.ws_client import BinanceKlineStream
 from src.orderbook import BinanceOrderBookStream
 from src.history import fetch_historical_klines
-from src.agent import run_agent, deep_dive
-from src.scanner import scan_markets
-from src.strategies import run_all_strategies
+from src.agent import run_agent
 
 load_dotenv()
 
@@ -47,6 +45,7 @@ TOOL_LABELS = {
     "get_open_interest": "📉 Fetching open interest from Binance Futures",
     "get_technical_analysis": "🔬 Running technical analysis on Binance data",
     "get_prediction_markets": "🎯 Fetching prediction markets from Polymarket",
+    "get_prediction_accuracy": "📊 Checking Polymarket accuracy data",
 }
 
 DEEP_DIVE_TOKENS = [
@@ -69,6 +68,7 @@ DEEP_DIVE_TOKENS = [
 
 def _report_to_docx_bytes(report_text: str, symbol: str) -> bytes:
     """Convert markdown-like report text to a .docx file in memory."""
+
     def _add_markdown_runs(paragraph, text: str) -> None:
         """
         Render simple markdown emphasis to Word runs.
@@ -130,6 +130,114 @@ def _report_to_docx_bytes(report_text: str, symbol: str) -> bytes:
     buf.seek(0)
     return buf.getvalue()
 
+
+def _report_to_pdf_bytes(report_text: str, symbol: str) -> bytes:
+    """Convert markdown-like report text to a professional PDF."""
+    from fpdf import FPDF
+    from datetime import datetime, timezone
+
+    DARK, ACCENT, WHITE = (13, 15, 18), (245, 158, 11), (255, 255, 255)
+    GRAY, BODY, BORDER = (140, 140, 140), (50, 50, 50), (220, 220, 220)
+    M = 25
+    now_str = datetime.now(timezone.utc).strftime("%B %d, %Y at %H:%M UTC")
+
+    def _safe(text: str) -> str:
+        text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+        text = re.sub(r"\*([^*]+)\*", r"\1", text)
+        text = re.sub(r"__([^_]+)__", r"\1", text)
+        text = re.sub(r"_([^_]+)_", r"\1", text)
+        return text.encode("latin-1", errors="ignore").decode("latin-1")
+
+    class ReportPDF(FPDF):
+        def header(self):
+            if self.page_no() == 1:
+                self.set_fill_color(*DARK)
+                self.rect(0, 0, 210, 46, style="F")
+                self.set_fill_color(*ACCENT)
+                self.rect(0, 46, 210, 1.5, style="F")
+                self.set_xy(M, 10)
+                self.set_text_color(*WHITE)
+                self.set_font("Helvetica", style="B", size=20)
+                self.cell(w=0, h=8, text="AlphaLens Research Report")
+                self.set_xy(M, 22)
+                self.set_font("Helvetica", style="B", size=26)
+                self.cell(w=0, h=10, text=_safe(symbol))
+                self.set_xy(M, 36)
+                self.set_text_color(170, 170, 170)
+                self.set_font("Helvetica", size=8)
+                self.cell(w=0, h=5, text=_safe(f"Generated {now_str}  |  Binance  CoinGecko  DefiLlama  Polymarket"))
+                self.set_y(52)
+                self.set_font("Helvetica", style="I", size=7)
+                self.set_text_color(*GRAY)
+                self.set_x(M)
+                self.multi_cell(w=210 - 2 * M, h=4, text=_safe("For research purposes only. Not financial advice. AI-generated content."))
+                self.ln(4)
+            else:
+                self.set_y(15)
+
+        def footer(self):
+            self.set_y(-14)
+            self.set_draw_color(*BORDER)
+            self.set_line_width(0.2)
+            self.line(M, self.get_y(), 210 - M, self.get_y())
+            self.ln(2)
+            self.set_font("Helvetica", size=7)
+            self.set_text_color(*GRAY)
+            cw = 210 - 2 * M
+            self.set_x(M)
+            self.cell(w=cw / 2, h=4, text="AlphaLens")
+            self.cell(w=cw / 2, h=4, text=f"Page {self.page_no()}", align="R")
+
+    pdf = ReportPDF()
+    pdf.set_margins(left=M, top=15, right=M)
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.add_page()
+    cw = 210 - 2 * M
+
+    for raw_line in report_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            pdf.ln(2)
+            continue
+
+        if line.startswith("### "):
+            pdf.ln(2)
+            pdf.set_font("Helvetica", style="B", size=10.5)
+            pdf.set_text_color(*DARK)
+            pdf.set_x(M)
+            pdf.multi_cell(w=cw, h=5.5, text=_safe(line[4:]))
+            pdf.ln(1)
+        elif line.startswith("## "):
+            pdf.ln(4)
+            pdf.set_draw_color(*ACCENT)
+            pdf.set_line_width(0.4)
+            pdf.line(M, pdf.get_y(), M + cw, pdf.get_y())
+            pdf.ln(2.5)
+            pdf.set_font("Helvetica", style="B", size=13)
+            pdf.set_text_color(*DARK)
+            pdf.set_x(M)
+            pdf.multi_cell(w=cw, h=6.5, text=_safe(line[3:]))
+            pdf.ln(1.5)
+        elif line.startswith("# "):
+            pdf.set_font("Helvetica", style="B", size=15)
+            pdf.set_text_color(*DARK)
+            pdf.set_x(M)
+            pdf.multi_cell(w=cw, h=7, text=_safe(line[2:]))
+            pdf.ln(2)
+        elif line.startswith(("- ", "* ")):
+            pdf.set_font("Helvetica", size=9.5)
+            pdf.set_text_color(*BODY)
+            pdf.set_x(M + 4)
+            pdf.multi_cell(w=cw - 4, h=5, text="- " + _safe(line[2:]))
+        else:
+            pdf.set_font("Helvetica", size=9.5)
+            pdf.set_text_color(*BODY)
+            pdf.set_x(M)
+            pdf.multi_cell(w=cw, h=5, text=_safe(line))
+
+    return bytes(pdf.output())
+
+
 # ── Page config ──────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="AlphaLens — Crypto Research Agent",
@@ -139,334 +247,249 @@ st.set_page_config(
 )
 
 # ── Theme definitions ─────────────────────────────────────────────────────────────
+# Inspired by: Artemis.ai, CoinGlass, Linear, Bloomberg
 THEMES = {
-    "Midnight Indigo": {
-        "bg": "#0b0e14",
-        "sidebar": "#0f1218",
-        "card": "linear-gradient(145deg, #181d2a 0%, #141926 100%)",
-        "border": "rgba(124,131,253,0.22)",
-        "border_subtle": "rgba(124,131,253,0.10)",
-        "accent": "#7c83fd",
-        "accent_hover": "#9196ff",
-        "accent_text": "#c0c4ff",
-        "accent_bg": "linear-gradient(135deg, #7c83fd22 0%, #7c83fd11 100%)",
-        "label": "rgba(255,255,255,0.55)",
-        "chat_bg": "#1c2135",          # noticeably lighter than page bg
-        "chat_text": "#dde1ff",        # soft lavender-white — crisp on dark blue
-        "code_bg": "#0f1320",
-        "status_bg": "#141820",
-        "btn_bg": "linear-gradient(135deg, #7c83fd 0%, #6366f1 100%)",
-        "btn_hover": "linear-gradient(135deg, #9196ff 0%, #818cf8 100%)",
-        "expander_bg": "#141820",
+    "Studio": {
+        "bg": "#0d0f12",
+        "sidebar": "#111418",
+        "card": "#151820",
+        "border": "#1f2937",
+        "border_subtle": "#1a1f2b",
+        "accent": "#f59e0b",
+        "accent_hover": "#fbbf24",
+        "accent_text": "#fcd34d",
+        "label": "#6b7280",
+        "text": "#d1d5db",
+        "text_muted": "#9ca3af",
+        "chat_bg": "#151820",
+        "chat_text": "#d1d5db",
+        "code_bg": "#0d0f12",
+        "green": "#22c55e",
+        "red": "#ef4444",
+        "radius": "6px",
     },
-    "Carbon Black": {
-        "bg": "#0a0a0a",
-        "sidebar": "#111111",
-        "card": "linear-gradient(145deg, #1a1a1a 0%, #161616 100%)",
-        "border": "rgba(0,230,118,0.20)",
-        "border_subtle": "rgba(255,255,255,0.08)",
-        "accent": "#00e676",
-        "accent_hover": "#69f0ae",
-        "accent_text": "#69f0ae",
-        "accent_bg": "rgba(0,230,118,0.09)",
-        "label": "rgba(255,255,255,0.5)",
-        "chat_bg": "#1c1c1c",          # dark charcoal — clear step up from page
-        "chat_text": "#e8ffe8",        # very light mint — pops on charcoal
-        "code_bg": "#0d0d0d",
-        "status_bg": "#141414",
-        "btn_bg": "linear-gradient(135deg, #00e676 0%, #00c853 100%)",
-        "btn_hover": "linear-gradient(135deg, #69f0ae 0%, #00e676 100%)",
-        "expander_bg": "#141414",
+    "Studio Light": {
+        "bg": "#ffffff",
+        "sidebar": "#f9fafb",
+        "card": "#ffffff",
+        "border": "#e5e7eb",
+        "border_subtle": "#f3f4f6",
+        "accent": "#d97706",
+        "accent_hover": "#b45309",
+        "accent_text": "#92400e",
+        "label": "#6b7280",
+        "text": "#111827",
+        "text_muted": "#6b7280",
+        "chat_bg": "#f9fafb",
+        "chat_text": "#111827",
+        "code_bg": "#f3f4f6",
+        "green": "#16a34a",
+        "red": "#dc2626",
+        "radius": "6px",
     },
-    "Glass Frost": {
-        "bg": "#0d1117",
-        "sidebar": "#111820",
-        "card": "linear-gradient(135deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.03) 100%)",
-        "border": "rgba(88,166,255,0.22)",
-        "border_subtle": "rgba(255,255,255,0.08)",
-        "accent": "#58a6ff",
-        "accent_hover": "#79b8ff",
-        "accent_text": "#93caff",
-        "accent_bg": "rgba(88,166,255,0.12)",
-        "label": "rgba(255,255,255,0.55)",
-        "chat_bg": "#182030",          # deep navy — crisp against page
-        "chat_text": "#d0e8ff",        # ice blue-white
-        "code_bg": "#0d1117",
-        "status_bg": "#111820",
-        "btn_bg": "linear-gradient(135deg, #58a6ff 0%, #388bfd 100%)",
-        "btn_hover": "linear-gradient(135deg, #79b8ff 0%, #58a6ff 100%)",
-        "expander_bg": "#111820",
+    "Artemis": {
+        "bg": "#09090b",
+        "sidebar": "#0c0c0f",
+        "card": "#111113",
+        "border": "#1e1e22",
+        "border_subtle": "#18181b",
+        "accent": "#6366f1",
+        "accent_hover": "#818cf8",
+        "accent_text": "#a5b4fc",
+        "label": "#71717a",
+        "text": "#e4e4e7",
+        "text_muted": "#a1a1aa",
+        "chat_bg": "#131316",
+        "chat_text": "#e4e4e7",
+        "code_bg": "#0c0c0f",
+        "green": "#10b981",
+        "red": "#ef4444",
+        "radius": "8px",
     },
-    "Cyber Neon": {
-        "bg": "#080612",
-        "sidebar": "#0c0a18",
-        "card": "linear-gradient(145deg, #16132e 0%, #110f26 100%)",
-        "border": "rgba(0,255,255,0.20)",
-        "border_subtle": "rgba(0,255,255,0.08)",
-        "accent": "#00ffff",
-        "accent_hover": "#66ffff",
-        "accent_text": "#66ffff",
-        "accent_bg": "rgba(0,255,255,0.09)",
-        "label": "rgba(255,255,255,0.5)",
-        "chat_bg": "#16132e",          # deep purple — clear vs near-black page
-        "chat_text": "#d0ffff",        # cyan-tinted white — very readable
-        "code_bg": "#0a0818",
-        "status_bg": "#12102a",
-        "btn_bg": "linear-gradient(135deg, #00ffff 0%, #00cccc 100%)",
-        "btn_hover": "linear-gradient(135deg, #66ffff 0%, #00ffff 100%)",
-        "expander_bg": "#12102a",
+    "Terminal": {
+        "bg": "#010409",
+        "sidebar": "#0d1117",
+        "card": "#0d1117",
+        "border": "#21262d",
+        "border_subtle": "#161b22",
+        "accent": "#22ab94",
+        "accent_hover": "#2dd4a8",
+        "accent_text": "#6ee7b7",
+        "label": "#7d8590",
+        "text": "#c9d1d9",
+        "text_muted": "#7d8590",
+        "chat_bg": "#0d1117",
+        "chat_text": "#c9d1d9",
+        "code_bg": "#010409",
+        "green": "#22ab94",
+        "red": "#f23645",
+        "radius": "6px",
+    },
+    "Minimal": {
+        "bg": "#000000",
+        "sidebar": "#0a0a0a",
+        "card": "#0a0a0a",
+        "border": "#1a1a1a",
+        "border_subtle": "#141414",
+        "accent": "#ffffff",
+        "accent_hover": "#e5e5e5",
+        "accent_text": "#e5e5e5",
+        "label": "#666666",
+        "text": "#ededed",
+        "text_muted": "#888888",
+        "chat_bg": "#0a0a0a",
+        "chat_text": "#ededed",
+        "code_bg": "#050505",
+        "green": "#00c853",
+        "red": "#ff3d00",
+        "radius": "8px",
     },
 }
 
 
 def _inject_theme(t: dict) -> None:
-    """Inject CSS for the selected theme."""
-    # Button text needs to be dark on bright accent themes
-    btn_text = "#000" if t["accent"] in ("#00e676", "#00ffff") else "#fff"
+    """Inject professional CSS — no gradients, no glow, just clean spacing."""
+    r = t["radius"]
+    is_light = t["bg"] in ("#ffffff", "#f9fafb", "#fafafa")
+    btn_text = (
+        "#fff"
+        if is_light
+        else ("#000" if t["accent"] in ("#ffffff", "#f59e0b") else "#fff")
+    )
     st.markdown(
         f"""
         <style>
-        .stApp {{ background: {t["bg"]}; }}
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        .stApp {{ background: {t["bg"]}; font-family: 'Inter', -apple-system, sans-serif; }}
+
+        /* Sidebar */
         section[data-testid="stSidebar"] {{
             background: {t["sidebar"]};
             border-right: 1px solid {t["border_subtle"]};
         }}
-
-        /* ── Sidebar text: force readable white on all dark themes ── */
-        section[data-testid="stSidebar"] * {{
-            color: rgba(255,255,255,0.88) !important;
+        section[data-testid="stSidebar"] * {{ color: {t["text_muted"]} !important; }}
+        section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3, section[data-testid="stSidebar"] strong {{
+            color: {t["text"]} !important;
         }}
-        section[data-testid="stSidebar"] h1,
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] h3,
-        section[data-testid="stSidebar"] strong {{
-            color: #ffffff !important;
+        section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] small {{
+            color: {t["label"]} !important;
         }}
-        section[data-testid="stSidebar"] .stSelectbox label,
-        section[data-testid="stSidebar"] .stMultiSelect label,
-        section[data-testid="stSidebar"] .stSlider label,
-        section[data-testid="stSidebar"] .stToggle label,
-        section[data-testid="stSidebar"] p {{
-            color: rgba(255,255,255,0.85) !important;
-            font-size: 0.82rem;
-        }}
-        section[data-testid="stSidebar"] .stCaption,
-        section[data-testid="stSidebar"] small {{
-            color: rgba(255,255,255,0.50) !important;
-        }}
-        /* Sidebar selectbox / multiselect drop area */
         section[data-testid="stSidebar"] [data-baseweb="select"] * {{
-            color: rgba(255,255,255,0.88) !important;
-            background-color: {t["expander_bg"]} !important;
+            color: {t["text"]} !important; background-color: {t["card"]} !important;
         }}
-        /* Sidebar buttons — nuke the default white background on every state */
         section[data-testid="stSidebar"] button {{
-            background-color: {t["expander_bg"]} !important;
-            background: {t["expander_bg"]} !important;
-            color: rgba(255,255,255,0.88) !important;
-            border: 1px solid {t["border"]} !important;
-            border-radius: 8px !important;
+            background: {t["card"]} !important; color: {t["text_muted"]} !important;
+            border: 1px solid {t["border"]} !important; border-radius: {r} !important;
             font-size: 0.78rem !important;
-            transition: border-color 0.15s, background-color 0.15s;
         }}
-        section[data-testid="stSidebar"] button:hover {{
-            background-color: {t["expander_bg"]} !important;
-            border-color: {t["accent"]} !important;
-        }}
-        /* Every text node inside sidebar buttons */
-        section[data-testid="stSidebar"] button *,
-        section[data-testid="stSidebar"] button p,
-        section[data-testid="stSidebar"] button span,
-        section[data-testid="stSidebar"] button div {{
-            color: rgba(255,255,255,0.88) !important;
-            background: transparent !important;
-        }}
-        /* Slider track label */
-        section[data-testid="stSidebar"] [data-testid="stSliderTickBarMin"],
-        section[data-testid="stSidebar"] [data-testid="stSliderTickBarMax"] {{
-            color: rgba(255,255,255,0.45) !important;
+        section[data-testid="stSidebar"] button:hover {{ border-color: {t["accent"]} !important; }}
+        section[data-testid="stSidebar"] button *, section[data-testid="stSidebar"] button span {{
+            color: {t["text_muted"]} !important; background: transparent !important;
         }}
 
-        /* Metric cards */
+        /* Metrics */
         [data-testid="stMetric"] {{
-            background: {t["card"]};
-            border: 1px solid {t["border"]};
-            border-radius: 14px;
-            padding: 18px 22px 14px;
+            background: {t["card"]}; border: 1px solid {t["border"]};
+            border-radius: {r}; padding: 16px 20px 12px;
         }}
         [data-testid="stMetricLabel"] {{
-            font-size: 0.72rem !important;
-            font-weight: 600 !important;
-            color: {t["label"]} !important;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
+            font-size: 0.7rem !important; font-weight: 500 !important;
+            color: {t["label"]} !important; text-transform: uppercase; letter-spacing: 0.06em;
         }}
         [data-testid="stMetricValue"] {{
-            font-size: 1.55rem !important;
-            font-weight: 700 !important;
-            color: #ffffff !important;
-            font-variant-numeric: tabular-nums;
-            letter-spacing: -0.3px;
+            font-size: 1.4rem !important; font-weight: 600 !important;
+            color: {t["text"]} !important; font-variant-numeric: tabular-nums;
         }}
-        [data-testid="stMetricDelta"] {{
-            font-size: 0.82rem !important;
-            font-weight: 500 !important;
-        }}
+        [data-testid="stMetricDelta"] {{ font-size: 0.78rem !important; font-weight: 500 !important; }}
         [data-testid="stMetricDelta"] svg {{ display: none; }}
 
-        /* Tabs */
+        /* Tabs — clean underline style */
         .stTabs [data-baseweb="tab-list"] {{
-            gap: 0;
-            background: {t["sidebar"]};
-            border-radius: 12px;
-            padding: 4px;
-            border: 1px solid {t["border_subtle"]};
+            gap: 0; background: transparent; border-radius: 0;
+            padding: 0; border: none; border-bottom: 1px solid {t["border"]};
         }}
         .stTabs [data-baseweb="tab"] {{
-            border-radius: 10px;
-            padding: 10px 24px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            color: rgba(255,255,255,0.5);
-            letter-spacing: 0.2px;
+            border-radius: 0; padding: 10px 20px; font-weight: 500;
+            font-size: 0.84rem; color: {t["text_muted"]}; letter-spacing: 0;
         }}
         .stTabs [aria-selected="true"] {{
-            background: {t["accent_bg"]} !important;
-            color: {t["accent_text"]} !important;
-            border-bottom: none !important;
+            background: transparent !important; color: {t["text"]} !important;
+            border-bottom: 2px solid {t["accent"]} !important;
         }}
         .stTabs [data-baseweb="tab-highlight"] {{ display: none; }}
         .stTabs [data-baseweb="tab-border"] {{ display: none; }}
 
         /* Expanders */
         .streamlit-expanderHeader {{
-            background: {t["expander_bg"]} !important;
-            border-radius: 10px !important;
-            border: 1px solid {t["border"]} !important;
-            font-weight: 600 !important;
+            background: {t["card"]} !important; border-radius: {r} !important;
+            border: 1px solid {t["border"]} !important; font-weight: 500 !important;
         }}
 
         /* Dataframes */
         [data-testid="stDataFrame"] {{
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid {t["border"]};
+            border-radius: {r}; overflow: hidden; border: 1px solid {t["border"]};
         }}
 
         /* Dividers */
         hr {{ border-color: {t["border_subtle"]} !important; }}
 
-        /* Chat bubbles */
+        /* Chat */
         [data-testid="stChatMessage"] {{
-            background: {t["chat_bg"]};
-            border: 1px solid {t["border"]};
-            border-radius: 16px;
-            padding: 18px 22px;
-            margin-bottom: 10px;
+            background: {t["chat_bg"]}; border: 1px solid {t["border"]};
+            border-radius: {r}; padding: 16px 20px; margin-bottom: 8px;
         }}
-        /* Nuclear contrast fix — catch every text node inside chat */
-        [data-testid="stChatMessage"] *:not(svg):not(path) {{
-            color: {t["chat_text"]} !important;
-        }}
-        [data-testid="stChatMessage"] h1,
-        [data-testid="stChatMessage"] h2,
-        [data-testid="stChatMessage"] h3,
-        [data-testid="stChatMessage"] h4,
-        [data-testid="stChatMessage"] strong,
-        [data-testid="stChatMessage"] b {{
-            color: #ffffff !important;
-            font-weight: 700 !important;
-        }}
-        [data-testid="stChatMessage"] em,
-        [data-testid="stChatMessage"] i {{
-            color: {t["accent_text"]} !important;
+        [data-testid="stChatMessage"] *:not(svg):not(path) {{ color: {t["chat_text"]} !important; }}
+        [data-testid="stChatMessage"] h1, [data-testid="stChatMessage"] h2,
+        [data-testid="stChatMessage"] h3, [data-testid="stChatMessage"] strong {{
+            color: {t["text"]} !important; font-weight: 600 !important;
         }}
         [data-testid="stChatMessage"] code {{
-            color: {t["accent_text"]} !important;
-            background: {t["code_bg"]} !important;
-            border-radius: 5px;
-            padding: 2px 6px;
-            font-size: 0.85em;
-        }}
-        [data-testid="stChatMessage"] pre code {{
-            color: {t["chat_text"]} !important;
-            background: transparent !important;
-            padding: 0;
+            color: {t["accent_text"]} !important; background: {t["code_bg"]} !important;
+            border-radius: 4px; padding: 2px 5px; font-size: 0.85em;
         }}
         [data-testid="stChatMessage"] pre {{
-            background: {t["code_bg"]} !important;
-            border-radius: 10px;
-            padding: 14px 18px;
-            border: 1px solid {t["border_subtle"]};
+            background: {t["code_bg"]} !important; border-radius: {r};
+            padding: 12px 16px; border: 1px solid {t["border_subtle"]};
         }}
-        [data-testid="stChatMessage"] blockquote {{
-            border-left: 3px solid {t["accent"]};
-            padding-left: 14px;
-            margin-left: 0;
-            opacity: 0.85;
-        }}
-        [data-testid="stChatMessage"] a {{
-            color: {t["accent_text"]} !important;
-            text-decoration: underline;
-        }}
-        /* Chat input */
+        [data-testid="stChatMessage"] pre code {{ color: {t["chat_text"]} !important; background: transparent !important; padding: 0; }}
+        [data-testid="stChatMessage"] blockquote {{ border-left: 2px solid {t["border"]}; padding-left: 12px; margin-left: 0; }}
+        [data-testid="stChatMessage"] a {{ color: {t["accent_text"]} !important; }}
         .stChatInputContainer {{
-            border-color: {t["border"]} !important;
-            border-radius: 14px !important;
-            background: {t["chat_bg"]} !important;
+            border-color: {t["border"]} !important; border-radius: {r} !important;
+            background: {t["card"]} !important;
         }}
-        .stChatInputContainer textarea {{
-            color: #ffffff !important;
-        }}
-        /* Thin accent scrollbar on chat window */
-        [data-testid="stVerticalBlockBorderWrapper"] {{
-            scrollbar-width: thin;
-            scrollbar-color: {t["accent"]}55 transparent;
-        }}
-        [data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar {{
-            width: 4px;
-        }}
-        [data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar-thumb {{
-            background: {t["accent"]}66;
-            border-radius: 4px;
-        }}
+        .stChatInputContainer textarea {{ color: {t["text"]} !important; }}
+
+        /* Scrollbar */
+        [data-testid="stVerticalBlockBorderWrapper"] {{ scrollbar-width: thin; scrollbar-color: {t["border"]} transparent; }}
+        [data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar {{ width: 4px; }}
+        [data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar-thumb {{ background: {t["border"]}; border-radius: 4px; }}
 
         /* Buttons */
         .stButton > button[kind="primary"] {{
-            background: {t["btn_bg"]};
-            color: {btn_text} !important;
-            border: none;
-            border-radius: 10px;
-            font-weight: 600;
+            background: {t["accent"]}; color: {btn_text} !important;
+            border: none; border-radius: {r}; font-weight: 600;
         }}
-        .stButton > button[kind="primary"]:hover {{
-            background: {t["btn_hover"]};
-        }}
+        .stButton > button[kind="primary"]:hover {{ background: {t["accent_hover"]}; }}
 
         /* Status badge */
         .status-bar {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: {t["status_bg"]};
-            border: 1px solid {t["border"]};
-            border-radius: 20px;
-            padding: 6px 16px;
-            font-size: 0.78rem;
-            color: rgba(255,255,255,0.55);
-            font-weight: 500;
-            letter-spacing: 0.3px;
+            display: inline-flex; align-items: center; gap: 8px;
+            background: {t["card"]}; border: 1px solid {t["border"]};
+            border-radius: 20px; padding: 5px 14px;
+            font-size: 0.75rem; color: {t["text_muted"]}; font-weight: 500;
         }}
         .status-bar .dot {{
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            background: #00e676;
-            box-shadow: 0 0 6px #00e67688;
-            display: inline-block;
+            width: 6px; height: 6px; border-radius: 50%;
+            background: {t["green"]}; display: inline-block;
         }}
-        .status-bar .dot.off {{
-            background: #ff1744;
-            box-shadow: 0 0 6px #ff174488;
+        .status-bar .dot.off {{ background: {t["red"]}; }}
+
+        /* Containers with border — prediction market cards */
+        [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) {{
+            border-color: {t["border"]} !important;
+            border-radius: {r} !important;
         }}
         </style>
         """,
@@ -488,7 +511,7 @@ if "history_loaded" not in st.session_state:
 if "chat_messages" not in st.session_state:
     st.session_state["chat_messages"] = []
 if "conversations" not in st.session_state:
-    st.session_state["conversations"] = []   # [{id, title, messages}]
+    st.session_state["conversations"] = []  # [{id, title, messages}]
 if "active_conv_id" not in st.session_state:
     st.session_state["active_conv_id"] = None
 
@@ -496,6 +519,7 @@ if "active_conv_id" not in st.session_state:
 def _archive_current_chat() -> None:
     """Save or update the current chat into the conversations list."""
     import time as _time
+
     msgs = st.session_state.get("chat_messages", [])
     if not msgs:
         return
@@ -512,6 +536,7 @@ def _archive_current_chat() -> None:
     new_id = str(int(_time.time() * 1000))
     convs.append({"id": new_id, "title": title, "messages": [dict(m) for m in msgs]})
     st.session_state["active_conv_id"] = new_id
+
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -545,7 +570,8 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("Data: Binance · CoinGecko · DefiLlama · Polymarket\nAI: GPT-4o / Gemini")
+    st.caption("Data: Binance · CoinGecko · DefiLlama · Polymarket")
+    st.caption("AI: GPT-4o / Gemini")
 
     # ── Conversation history ─────────────────────────────────────────────────
     st.divider()
@@ -604,7 +630,11 @@ with st.sidebar:
                 st.session_state["active_conv_id"] = conv["id"]
                 st.rerun()
 
-_inject_theme(THEMES[theme_name])
+_active_theme = THEMES[theme_name]
+_inject_theme(_active_theme)
+_is_light_theme = _active_theme["bg"] in ("#ffffff", "#f9fafb", "#fafafa")
+_plotly_template = "plotly_white" if _is_light_theme else "plotly_dark"
+_grid_color = "#e5e7eb" if _is_light_theme else "#2a2a2a"
 
 primary = symbols[0]
 
@@ -651,19 +681,6 @@ if ob_key not in st.session_state:
 # ── Header ───────────────────────────────────────────────────────────────────────
 primary_stream = st.session_state.get(f"ks_{primary}_{interval}")
 is_live = primary_stream and primary_stream.is_running
-title = " · ".join(symbols) if len(symbols) > 1 else primary
-st.title(f"{title}")
-dot_cls = "" if is_live else " off"
-status_text = "Live" if is_live else "Disconnected"
-st.markdown(
-    f'<div class="status-bar">'
-    f'<span class="dot{dot_cls}"></span> {status_text}'
-    f" &nbsp;·&nbsp; {interval} candles"
-    f" &nbsp;·&nbsp; {lookback} loaded"
-    f" &nbsp;·&nbsp; {len(symbols)} stream(s)"
-    f"</div>",
-    unsafe_allow_html=True,
-)
 
 # ════════════════════════════════════════════════════════════════════════════════
 # TABS
@@ -673,7 +690,7 @@ tab_dashboard, tab_research, tab_scanner = st.tabs(
     [
         "📊 Dashboard",
         "💬 Chatbot",
-        "🎯 Prediction Scanner",
+        "🎯 Prediction Markets",
     ]
 )
 
@@ -683,6 +700,19 @@ tab_dashboard, tab_research, tab_scanner = st.tabs(
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_dashboard:
+    _asset_title = " · ".join(symbols) if len(symbols) > 1 else primary
+    st.markdown(f"### {_asset_title}")
+    _dot_cls = "" if is_live else " off"
+    _status_text = "Live" if is_live else "Disconnected"
+    st.markdown(
+        f'<div class="status-bar">'
+        f'<span class="dot{_dot_cls}"></span> {_status_text}'
+        f" &nbsp;·&nbsp; {interval} candles"
+        f" &nbsp;·&nbsp; {lookback} loaded"
+        f" &nbsp;·&nbsp; {len(symbols)} stream(s)"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     @st.fragment(run_every=5 if auto_refresh else None)
     def _dashboard():
@@ -836,16 +866,17 @@ with tab_dashboard:
                     ],
                 )
             )
+
             fig.update_layout(
-                template="plotly_dark",
+                template=_plotly_template,
                 height=540,
                 margin=dict(l=0, r=0, t=40, b=0),
                 title=dict(
                     text=f"{primary} · {interval}  |  SMA20  SMA50  BB",
                     font=dict(size=14),
                 ),
-                xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
-                yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"),
+                xaxis=dict(showgrid=True, gridcolor=_grid_color),
+                yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor=_grid_color),
                 yaxis2=dict(
                     title="Volume", overlaying="y", side="right", showgrid=False
                 ),
@@ -941,18 +972,18 @@ with tab_dashboard:
                     y=0, line_color="rgba(255,255,255,0.15)", row=2, col=1
                 )
                 fig_ind.update_layout(
-                    template="plotly_dark",
+                    template=_plotly_template,
                     height=420,
                     margin=dict(l=0, r=0, t=40, b=0),
-                    plot_bgcolor="#0e1117",
-                    paper_bgcolor="#0e1117",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
                     legend=dict(
                         orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)
                     ),
                     showlegend=True,
                 )
-                fig_ind.update_yaxes(showgrid=True, gridcolor="#2a2a2a")
-                fig_ind.update_xaxes(showgrid=True, gridcolor="#2a2a2a")
+                fig_ind.update_yaxes(showgrid=True, gridcolor=_grid_color)
+                fig_ind.update_xaxes(showgrid=True, gridcolor=_grid_color)
                 st.plotly_chart(fig_ind, width="stretch")
 
         else:
@@ -992,7 +1023,7 @@ with tab_dashboard:
                 y=0, line_dash="dash", line_color="rgba(255,255,255,0.15)"
             )
             fig_comp.update_layout(
-                template="plotly_dark",
+                template=_plotly_template,
                 height=360,
                 margin=dict(l=0, r=0, t=40, b=0),
                 title=dict(
@@ -1000,9 +1031,12 @@ with tab_dashboard:
                     font=dict(size=14),
                 ),
                 yaxis=dict(
-                    title="% Change", showgrid=True, gridcolor="#2a2a2a", ticksuffix="%"
+                    title="% Change",
+                    showgrid=True,
+                    gridcolor=_grid_color,
+                    ticksuffix="%",
                 ),
-                xaxis=dict(showgrid=True, gridcolor="#2a2a2a"),
+                xaxis=dict(showgrid=True, gridcolor=_grid_color),
                 plot_bgcolor="rgba(0,0,0,0)",
                 paper_bgcolor="rgba(0,0,0,0)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02),
@@ -1033,14 +1067,14 @@ with tab_dashboard:
                                 )
                             )
                             fig_mini.update_layout(
-                                template="plotly_dark",
+                                template=_plotly_template,
                                 height=280,
                                 margin=dict(l=0, r=0, t=30, b=0),
                                 title=dict(text=sym, font=dict(size=13)),
                                 xaxis=dict(showgrid=False, showticklabels=False),
                                 yaxis=dict(
                                     showgrid=True,
-                                    gridcolor="#2a2a2a",
+                                    gridcolor=_grid_color,
                                     tickfont=dict(size=10),
                                 ),
                                 xaxis_rangeslider_visible=False,
@@ -1142,17 +1176,17 @@ with tab_dashboard:
                     )
                 )
                 fig_depth.update_layout(
-                    template="plotly_dark",
+                    template=_plotly_template,
                     height=300,
                     margin=dict(l=0, r=0, t=20, b=0),
                     xaxis=dict(
-                        title="Price (USDT)", showgrid=True, gridcolor="#2a2a2a"
+                        title="Price (USDT)", showgrid=True, gridcolor=_grid_color
                     ),
                     yaxis=dict(
-                        title="Cumulative Volume", showgrid=True, gridcolor="#2a2a2a"
+                        title="Cumulative Volume", showgrid=True, gridcolor=_grid_color
                     ),
-                    plot_bgcolor="#0e1117",
-                    paper_bgcolor="#0e1117",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
                     legend=dict(orientation="h"),
                 )
                 st.plotly_chart(fig_depth, width="stretch")
@@ -1164,7 +1198,6 @@ with tab_dashboard:
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_research:
-    from src.prompts.quick_prompts import QUICK_PROMPTS
 
     @st.fragment
     def _chatbot(sym: str) -> None:
@@ -1174,9 +1207,6 @@ with tab_research:
             or os.getenv("gpt_api_key")
             or os.getenv("GEMINI_API_KEY")
         )
-
-        # ── Consume any pending quick-prompt BEFORE rendering history ─────────
-        pending = st.session_state.pop("research_pending", None)
 
         # ── Fixed-height scrollable chat window ───────────────────────────────
         chat_window = st.container(height=520, border=False)
@@ -1190,9 +1220,17 @@ with tab_research:
                         "Binance Futures, and Polymarket — then give you a cited answer.\n\n"
                         "Use the quick buttons below or type your own question."
                     )
-            for msg in st.session_state["chat_messages"]:
+            for _mi, msg in enumerate(st.session_state["chat_messages"]):
                 with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
+                    st.markdown(msg["content"].replace("$", r"\$"))
+                    if msg["role"] == "assistant" and len(msg["content"]) > 100:
+                        st.download_button(
+                            "⬇️ Download PDF",
+                            data=_report_to_pdf_bytes(msg["content"], sym),
+                            file_name=f"alphalens-{sym.lower()}-{_mi}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_hist_{_mi}",
+                        )
 
         # Auto-scroll to bottom
         st.components.v1.html(
@@ -1209,30 +1247,12 @@ with tab_research:
             height=0,
         )
 
-        # ── Quick-action buttons ───────────────────────────────────────────────
-        st.markdown(
-            "<div style='margin:1rem 0 0.4rem; font-size:0.78rem; "
-            "color:rgba(255,255,255,0.45); letter-spacing:0.06em;'>"
-            "QUICK RESEARCH</div>",
-            unsafe_allow_html=True,
-        )
-        btn_cols = st.columns(len(QUICK_PROMPTS))
-        for i, (label, emoji, tmpl) in enumerate(QUICK_PROMPTS):
-            with btn_cols[i]:
-                if st.button(
-                    f"{emoji} {label}", use_container_width=True, key=f"qp_{i}"
-                ):
-                    # Store prompt and let the fragment rerun pick it up —
-                    # no explicit st.rerun() so we never leave this tab.
-                    st.session_state["research_pending"] = tmpl.format(symbol=sym)
-                    st.rerun(scope="fragment")
-
         # ── Chat input ────────────────────────────────────────────────────────
-        user_typed = st.chat_input(
-            f"Ask about {sym} or any crypto… (e.g. 'Is ETH overbought?')"
-        )
+        # Both chat_input and quick buttons live outside the fragment.
+        # They store into _chat_user_input, consumed here on the next rerun.
+        user_typed = st.session_state.pop("_chat_user_input", None)
 
-        prompt_to_run = pending or (user_typed or None)
+        prompt_to_run = user_typed
 
         if prompt_to_run:
             if not api_key:
@@ -1288,27 +1308,62 @@ with tab_research:
                                 label="✅ Done", state="complete", expanded=False
                             )
 
-                    st.markdown(response)
+                    st.markdown(response.replace("$", r"\$"))
 
-                    if len(response) > 1500 and "##" in response:
+                    if response and len(response) > 100:
                         _sym_safe = sym.lower()
                         _ts = pd.Timestamp.utcnow().strftime("%Y%m%d-%H%M%S")
-                        st.download_button(
-                            "⬇️ Download as Word (.docx)",
-                            data=_report_to_docx_bytes(response, sym),
-                            file_name=f"alphalens-{_sym_safe}-{_ts}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            key=f"dl_{_ts}",
-                        )
+                        _dl1, _dl2 = st.columns(2)
+                        with _dl1:
+                            st.download_button(
+                                "⬇️ Download PDF",
+                                data=_report_to_pdf_bytes(response, sym),
+                                file_name=f"alphalens-{_sym_safe}-{_ts}.pdf",
+                                mime="application/pdf",
+                                key=f"dl_pdf_{_ts}",
+                                use_container_width=True,
+                            )
+                        with _dl2:
+                            st.download_button(
+                                "⬇️ Download Word",
+                                data=_report_to_docx_bytes(response, sym),
+                                file_name=f"alphalens-{_sym_safe}-{_ts}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"dl_docx_{_ts}",
+                                use_container_width=True,
+                            )
 
                 st.session_state["chat_messages"].append(
                     {"role": "assistant", "content": response}
                 )
                 _archive_current_chat()
-                # Fragment-scoped rerun — stays on this tab
-                st.rerun(scope="fragment")
+                st.rerun()
 
     _chatbot(primary.replace("USDT", ""))
+
+    # Quick buttons + chat_input must live OUTSIDE the fragment (Streamlit 1.55+)
+    from src.prompts.quick_prompts import QUICK_PROMPTS as _QP
+
+    st.markdown(
+        "<div style='margin:1rem 0 0.4rem; font-size:0.78rem; "
+        "color:rgba(255,255,255,0.45); letter-spacing:0.06em;'>"
+        "QUICK RESEARCH</div>",
+        unsafe_allow_html=True,
+    )
+    _sym = primary.replace("USDT", "")
+    _btn_cols = st.columns(len(_QP))
+    for _i, (_label, _emoji, _tmpl) in enumerate(_QP):
+        with _btn_cols[_i]:
+            if st.button(
+                f"{_emoji} {_label}", use_container_width=True, key=f"qp_{_i}"
+            ):
+                st.session_state["_chat_user_input"] = _tmpl.format(symbol=_sym)
+                st.rerun()
+
+    _typed = st.chat_input(f"Ask about {_sym} or any crypto…")
+    if _typed:
+        st.session_state["_chat_user_input"] = _typed
+        st.rerun()
 
 # ════════════════════════════════════════════════════════════════════════════════
 # TAB 4 — LIVE PREDICTION MARKETS
@@ -1316,10 +1371,48 @@ with tab_research:
 
 with tab_scanner:
     st.markdown("### 🎯 Live Prediction Markets")
-    st.caption("Auto-refreshing every 30s · Polymarket · Real-time Binance prices")
+    st.caption("Auto-refreshing every 30s · Polymarket")
 
     if "mkt_history" not in st.session_state:
         st.session_state["mkt_history"] = {}
+
+    # ── Coin filter + sort controls ───────────────────────────────────────────
+    COIN_OPTIONS = [
+        "All",
+        "BTC",
+        "ETH",
+        "SOL",
+        "BNB",
+        "XRP",
+        "DOGE",
+        "ADA",
+        "AVAX",
+        "LINK",
+        "DOT",
+        "UNI",
+        "NEAR",
+        "ARB",
+        "SUI",
+        "APT",
+        "PEPE",
+        "TON",
+        "TIA",
+    ]
+    filter_col, time_col = st.columns([3, 1])
+    with filter_col:
+        coin_filter = st.multiselect(
+            "Filter by coin",
+            COIN_OPTIONS,
+            default=["All"],
+            key="scanner_coin_filter",
+        )
+    with time_col:
+        time_filter = st.selectbox(
+            "Time period",
+            ["All", "Today", "This Week", "This Month", "Long-term"],
+            index=0,
+            key="scanner_time_filter",
+        )
 
     def _fmt_time(hours: float) -> str:
         if hours <= 0:
@@ -1342,158 +1435,320 @@ with tab_scanner:
     @st.fragment(run_every=30 if auto_refresh else None)
     def _live_markets():
         from datetime import datetime, timezone
-        from src.polymarket import fetch_price_history
+        from collections import defaultdict
+        from src.polymarket import fetch_crypto_markets
+
+        def _hours_until(expiry):
+            if expiry is None:
+                return 168.0
+            delta = (expiry - datetime.now(timezone.utc)).total_seconds() / 3600
+            return max(0, delta)
 
         try:
-            opps, arbs = scan_markets(
-                interval=interval, edge_threshold=0, on_progress=None
-            )
+            raw_markets = fetch_crypto_markets()
         except Exception:
-            opps, arbs = [], []
+            raw_markets = []
 
-        if not opps:
+        # Only keep markets for coins in our tracked asset list
+        tracked_symbols = set(AVAILABLE_SYMBOLS)
+        markets = []
+        for m in raw_markets:
+            if m["symbol"] not in tracked_symbols:
+                continue
+            vol = m.get("volume", 0)
+            if vol < 10_000:
+                continue
+            odds = m["yes_price"] * 100
+            hours = _hours_until(m.get("expiry"))
+            markets.append(
+                {
+                    "id": m.get("id", ""),
+                    "question": m["question"],
+                    "symbol": m["symbol"],
+                    "market_odds": round(odds, 1),
+                    "volume": vol,
+                    "liquidity": m.get("liquidity", 0),
+                    "hours_left": round(hours, 1),
+                    "slug": m.get("slug", ""),
+                    "clob_token_id": m.get("clob_token_id"),
+                    "threshold": m.get("threshold"),
+                    "direction": m.get("direction", "above"),
+                    "event_id": m.get("event_id", ""),
+                    "event_title": m.get("event_title", ""),
+                }
+            )
+
+        if not markets:
             st.info(
-                "No crypto prediction markets found right now. "
+                "No crypto prediction markets with >$10K volume found. "
                 "Markets may be inactive or APIs temporarily unreachable."
             )
             return
 
-        # Track price history per market
+        # Track current odds for all markets (cheap — no HTTP calls)
         now = datetime.now(timezone.utc)
-        for opp in opps:
-            key = opp["id"] or opp["question"][:60]
+        for mkt in markets:
+            key = mkt["id"] or mkt["question"][:60]
             if key not in st.session_state["mkt_history"]:
-                # Seed with Polymarket CLOB history if available
-                seed: list[tuple[float, float]] = []
-                tid = opp.get("clob_token_id")
-                if tid:
-                    raw = fetch_price_history(tid, interval="1w", fidelity=40)
-                    seed = [(t, p * 100) for t, p in raw]
-                st.session_state["mkt_history"][key] = seed
+                st.session_state["mkt_history"][key] = []
             st.session_state["mkt_history"][key].append(
-                (now.timestamp(), opp["market_odds"])
+                (now.timestamp(), mkt["market_odds"])
             )
             st.session_state["mkt_history"][key] = st.session_state["mkt_history"][key][
                 -120:
             ]
 
-        # ── Arbitrage alerts ─────────────────────────────────────────────
-        if arbs:
-            for arb in arbs:
-                t = arb.get("threshold")
-                t_str = f"${t:,.0f}" if t else ""
-                st.success(
-                    f"**ARBITRAGE** {arb['symbol'].replace('USDT', '')} {t_str} — "
-                    f"{arb['action']} → **{arb['guaranteed_profit']:.1f}¢ guaranteed profit**"
+        # ── Filter by coin ────────────────────────────────────────────────
+        selected_coins = coin_filter if coin_filter else ["All"]
+        if "All" not in selected_coins:
+            filter_pairs = {c + "USDT" for c in selected_coins}
+            visible = [m for m in markets if m["symbol"] in filter_pairs]
+        else:
+            visible = list(markets)
+
+        # ── Filter by time period ─────────────────────────────────────────
+        if time_filter != "All":
+            time_ranges = {
+                "Today": 24,
+                "This Week": 168,
+                "This Month": 744,
+                "Long-term": float("inf"),
+            }
+            max_h = time_ranges[time_filter]
+            if time_filter == "Long-term":
+                visible = [m for m in visible if m["hours_left"] > 744]
+            else:
+                prev_max = {"Today": 0, "This Week": 24, "This Month": 168}[time_filter]
+                visible = [m for m in visible if prev_max < m["hours_left"] <= max_h]
+
+        # ── Sort by volume (highest first) ────────────────────────────────
+        visible.sort(key=lambda o: o.get("volume", 0), reverse=True)
+
+        # ── Summary stats ─────────────────────────────────────────────────
+        total_vol = sum(o.get("volume", 0) for o in visible)
+        coins_in_view = sorted(
+            {
+                o["symbol"].replace("USDT", "")
+                for o in visible
+                if o["symbol"] != "CRYPTOUSDT"
+            }
+        )
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Markets", len(visible))
+        s2.metric("Total Volume", _fmt_vol(total_vol))
+        s3.metric("Coins", " · ".join(coins_in_view) if coins_in_view else "—")
+
+        # ── Implied price range summary ────────────────────────────────────
+        coin_targets: dict[str, list[dict]] = defaultdict(list)
+        for mkt in visible:
+            if mkt.get("threshold") and mkt["symbol"] != "CRYPTOUSDT":
+                coin_targets[mkt["symbol"]].append(mkt)
+
+        if coin_targets:
+            from datetime import datetime, timedelta, timezone as _tz
+
+            _now = datetime.now(_tz.utc)
+
+            lines = []
+            for sym_key in sorted(
+                coin_targets,
+                key=lambda s: sum(m["volume"] for m in coin_targets[s]),
+                reverse=True,
+            )[:4]:
+                coin_name = sym_key.replace("USDT", "")
+                targets = coin_targets[sym_key]
+
+                # Group by event (= same resolution date), pick highest-volume event
+                by_event: dict[str, list[dict]] = defaultdict(list)
+                for t in targets:
+                    eid = t.get("event_id") or "unknown"
+                    by_event[eid].append(t)
+                top_event = max(
+                    by_event.values(), key=lambda g: sum(m["volume"] for m in g)
                 )
 
-        # ── Live Market cards — edge > 0.1% and volume > $500 ────────
-        visible = [
-            o
-            for o in opps
-            if o.get("volume", 0) >= 500
-            and (abs(o["edge"]) > 0.1 or not o.get("threshold"))
-        ]
+                # Pick the market with the highest probability
+                best = max(top_event, key=lambda t: t["market_odds"])
 
-        st.markdown(f"#### Live Markets ({len(visible)})")
-        for row_start in range(0, len(visible), 2):
+                # Resolution date
+                h = best["hours_left"]
+                exp_dt = _now + timedelta(hours=h)
+                by_when = exp_dt.strftime("by %b %d")
+
+                lines.append(
+                    f"**{coin_name}**: {best['market_odds']:.0f}% chance "
+                    f"{best['direction']} ${best['threshold']:,.0f} {by_when}"
+                )
+
+            if lines:
+                st.markdown(
+                    '<div style="background:rgba(124,131,253,0.06);border:1px solid rgba(124,131,253,0.12);'
+                    'border-radius:10px;padding:12px 16px;margin-bottom:16px;">'
+                    '<div style="font-size:0.72rem;font-weight:600;color:rgba(255,255,255,0.4);'
+                    'letter-spacing:0.08em;margin-bottom:6px;">MARKET CONSENSUS</div>'
+                    + "<br>".join(lines)
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # ── Event grouping — top 2 by volume get histogram ─────────────────
+        event_groups: dict[str, list[dict]] = defaultdict(list)
+        for mkt in visible:
+            eid = mkt.get("event_id")
+            if eid and mkt.get("threshold"):
+                event_groups[eid].append(mkt)
+
+        sorted_events = sorted(
+            event_groups.items(),
+            key=lambda x: sum(m["volume"] for m in x[1]),
+            reverse=True,
+        )
+        histogram_ids: set[str] = set()
+        histogram_count = 0
+        for eid, group in sorted_events:
+            if len(group) >= 3 and histogram_count < 2:
+                histogram_count += 1
+                histogram_ids.add(eid)
+                _render_event_group(group)
+
+        # ── Sparkline cards (skip markets already in histograms) ──────────
+        card_mkts = [m for m in visible if m.get("event_id", "") not in histogram_ids]
+        for row_start in range(0, len(card_mkts), 2):
             cols = st.columns(2)
-            for col_idx, opp in enumerate(visible[row_start : row_start + 2]):
+            for col_idx, mkt in enumerate(card_mkts[row_start : row_start + 2]):
                 with cols[col_idx]:
-                    _render_market_card(opp)
+                    _render_market_card(mkt)
 
-        # ── Strategy Signals ─────────────────────────────────────────────
-        tracked = list({o["symbol"] for o in opps})
-        strat_signals = run_all_strategies(tracked, interval)
+    def _render_event_group(group: list[dict]) -> None:
+        """Render a price-target event as a distribution chart."""
+        title = group[0].get("event_title") or group[0]["question"][:50]
+        coin = group[0]["symbol"].replace("USDT", "")
+        total_vol = sum(m["volume"] for m in group)
+        direction = group[0].get("direction", "above")
 
-        if strat_signals:
-            st.divider()
-            st.markdown("#### Strategy Signals")
-            for row_start in range(0, len(strat_signals), 3):
-                scols = st.columns(min(3, len(strat_signals) - row_start))
-                for ci, sig in enumerate(strat_signals[row_start : row_start + 3]):
-                    with scols[ci]:
-                        d = sig["direction"]
-                        icon = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}.get(
-                            d, "⚪"
-                        )
-                        with st.container(border=True):
-                            st.markdown(
-                                f"{icon} **{sig['strategy']}** — "
-                                f"{sig['symbol'].replace('USDT', '')}"
-                            )
-                            st.metric(
-                                "Strength", f"{sig['strength']}%", sig["direction"]
-                            )
-                            st.caption(sig["prediction"])
-                            for detail in sig["details"][:3]:
-                                st.caption(f"· {detail}")
-
-    def _market_url(opp: dict) -> str:
-        if opp["platform"] == "Polymarket":
-            slug = opp.get("slug") or opp.get("id", "")
-            return f"https://polymarket.com/event/{slug}"
-
-    def _render_market_card(opp: dict) -> None:
-        edge_val = opp["edge"]
-        odds = opp["market_odds"]
-        odds_color = "#00e676" if odds >= 50 else "#ff1744"
-        url = _market_url(opp)
-
-        # Platform badge styling
-        if opp["platform"] == "Polymarket":
-            badge_color = "#4a6cf7"
-            badge_icon = "◆"
-        else:
-            badge_color = "#00b4d8"
-            badge_icon = "◆"
+        # Sort by threshold
+        sorted_g = sorted(group, key=lambda m: m["threshold"] or 0)
 
         with st.container(border=True):
-            # Question (clickable)
             st.markdown(
-                f'<a href="{url}" target="_blank" style="color: inherit; text-decoration: none;">'
-                f'<span style="font-weight: 600; font-size: 0.92rem; line-height: 1.4;">'
-                f"{opp['question']}</span></a>",
-                unsafe_allow_html=True,
-            )
-
-            # Big chance % + edge badge
-            if abs(edge_val) >= 1:
-                e_color = "#00e676" if edge_val > 0 else "#ff1744"
-                e_label = opp["action"]
-                edge_html = (
-                    f'<span style="background:{e_color}22; color:{e_color}; '
-                    f"padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
-                    f'font-weight: 600; margin-left: 12px;">'
-                    f"{edge_val:+.1f}% {e_label}</span>"
-                )
-            elif opp.get("threshold"):
-                edge_html = (
-                    '<span style="background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.4); '
-                    "padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
-                    'font-weight: 500; margin-left: 12px;">~0% edge</span>'
-                )
-            else:
-                edge_html = (
-                    '<span style="background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.35); '
-                    "padding: 2px 10px; border-radius: 8px; font-size: 0.78rem; "
-                    'font-weight: 500; margin-left: 12px;">no model</span>'
-                )
-
-            st.markdown(
-                f'<div style="margin: 8px 0 4px;">'
-                f'<span style="font-size: 1.8rem; font-weight: 700; color: {odds_color};">'
-                f"{odds:.0f}%</span>"
-                f'<span style="font-size: 0.82rem; color: rgba(255,255,255,0.45); '
-                f'margin-left: 6px; font-weight: 500;">Chance</span>'
-                f"{edge_html}"
+                f'<div style="display:flex;align-items:center;gap:10px;">'
+                f'<span style="background:rgba(124,131,253,0.15);color:#a5abff;'
+                f'padding:2px 8px;border-radius:6px;font-size:0.72rem;font-weight:700;">{coin}</span>'
+                f'<span style="font-weight:600;font-size:0.95rem;">{title}</span>'
+                f'<span style="color:rgba(255,255,255,0.35);font-size:0.75rem;margin-left:auto;">'
+                f"{_fmt_vol(total_vol)} vol · {len(group)} markets · "
+                f'<span style="color:#2E5CFF;">Polymarket</span></span>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
 
-            # Sparkline
+            # Bar chart — probability at each strike
+            labels = []
+            probs = []
+            colors = []
+            for m in sorted_g:
+                t = m["threshold"]
+                if t >= 1000:
+                    labels.append(f"${t / 1000:.0f}K")
+                else:
+                    labels.append(f"${t:,.0f}")
+                p = m["market_odds"]
+                probs.append(p)
+                colors.append(
+                    "#00e676" if p >= 50 else "#ff1744" if p < 20 else "#ff9800"
+                )
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Bar(
+                    x=labels,
+                    y=probs,
+                    marker_color=colors,
+                    text=[f"{p:.0f}%" for p in probs],
+                    textposition="outside",
+                    textfont=dict(color="rgba(255,255,255,0.7)", size=11),
+                    hovertemplate="%{x}: %{y:.1f}%<extra></extra>",
+                )
+            )
+            fig.update_layout(
+                height=200,
+                margin=dict(l=0, r=0, t=10, b=0),
+                xaxis=dict(
+                    showgrid=False,
+                    color="rgba(255,255,255,0.5)",
+                    tickfont=dict(size=11),
+                ),
+                yaxis=dict(
+                    visible=False, range=[0, max(probs) * 1.25] if probs else [0, 100]
+                ),
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                dragmode=False,
+            )
+            fig.update_xaxes(fixedrange=True)
+            fig.update_yaxes(fixedrange=True)
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                config={"displayModeBar": False},
+                key=f"hist_{group[0]['event_id']}",
+            )
+
+    def _render_market_card(opp: dict) -> None:
+        odds = opp["market_odds"]
+        odds_color = "#00e676" if odds >= 50 else "#ff1744"
+        coin = opp["symbol"].replace("USDT", "")
+
+        with st.container(border=True):
+            # Header: coin badge + question
+            st.markdown(
+                f'<div style="display:flex;align-items:flex-start;gap:10px;">'
+                f'<span style="background:rgba(124,131,253,0.15);color:#a5abff;'
+                f"padding:2px 8px;border-radius:6px;font-size:0.72rem;"
+                f'font-weight:700;letter-spacing:0.5px;white-space:nowrap;margin-top:2px;">{coin}</span>'
+                f'<span style="font-weight:600;font-size:0.92rem;line-height:1.4;">'
+                f"{opp['question']}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Probability + change (lazy-seed price history on first render)
             key = opp["id"] or opp["question"][:60]
             history = st.session_state.get("mkt_history", {}).get(key, [])
+            if len(history) <= 1 and opp.get("clob_token_id"):
+                from src.polymarket import fetch_price_history
+
+                raw = fetch_price_history(
+                    opp["clob_token_id"], interval="1w", fidelity=40
+                )
+                seed = [(t, p * 100) for t, p in raw]
+                if seed:
+                    st.session_state["mkt_history"][key] = seed + history
+                    history = st.session_state["mkt_history"][key]
+            change_html = ""
+            if len(history) >= 2:
+                first_p, last_p = history[0][1], history[-1][1]
+                delta = last_p - first_p
+                if abs(delta) >= 0.1:
+                    d_color = "#00e676" if delta > 0 else "#ff1744"
+                    d_arrow = "+" if delta > 0 else ""
+                    change_html = (
+                        f'<span style="font-size:0.82rem;font-weight:600;color:{d_color};'
+                        f'margin-left:10px;">{d_arrow}{delta:.1f}%</span>'
+                    )
+
+            st.markdown(
+                f'<div style="margin:8px 0 2px;">'
+                f'<span style="font-size:1.8rem;font-weight:700;color:{odds_color};">'
+                f"{odds:.0f}%</span>"
+                f'<span style="font-size:0.82rem;color:rgba(255,255,255,0.45);'
+                f'margin-left:6px;font-weight:500;">Chance</span>'
+                f"{change_html}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Chart — Polymarket/Robinhood style
             if len(history) >= 2:
                 from datetime import datetime, timezone
 
@@ -1501,63 +1756,93 @@ with tab_scanner:
                 prices = [p for _, p in history]
                 first_p, last_p = prices[0], prices[-1]
                 line_color = "#00e676" if last_p >= first_p else "#ff1744"
-                fill_color = (
-                    "rgba(0,230,118,0.08)"
+                fill_top = (
+                    "rgba(0,230,118,0.15)"
                     if last_p >= first_p
-                    else "rgba(255,23,68,0.08)"
+                    else "rgba(255,23,68,0.15)"
                 )
+
                 fig = go.Figure()
                 fig.add_trace(
                     go.Scatter(
                         x=times,
                         y=prices,
-                        mode="lines",
-                        line=dict(color=line_color, width=2),
+                        mode="none",
                         fill="tozeroy",
-                        fillcolor=fill_color,
+                        fillcolor=fill_top,
                         showlegend=False,
+                        hoverinfo="skip",
                     )
                 )
+                fig.add_trace(
+                    go.Scatter(
+                        x=times,
+                        y=prices,
+                        mode="lines",
+                        line=dict(
+                            color=line_color, width=2.5, shape="spline", smoothing=1.0
+                        ),
+                        showlegend=False,
+                        hovertemplate="%{y:.1f}%<extra></extra>",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=[times[-1]],
+                        y=[prices[-1]],
+                        mode="markers",
+                        marker=dict(
+                            color=line_color,
+                            size=7,
+                            line=dict(width=2, color="#0b0e14"),
+                        ),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+                y_min = max(0, min(prices) - 5)
+                y_max = min(100, max(prices) + 5)
                 fig.update_layout(
-                    height=65,
+                    height=110,
                     margin=dict(l=0, r=0, t=0, b=0),
-                    xaxis=dict(visible=False),
-                    yaxis=dict(visible=False),
+                    xaxis=dict(visible=False, showgrid=False),
+                    yaxis=dict(
+                        visible=False,
+                        showgrid=False,
+                        range=[y_min, y_max],
+                        fixedrange=True,
+                    ),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
+                    hoverlabel=dict(
+                        bgcolor="#1a1e2e",
+                        bordercolor="rgba(255,255,255,0.1)",
+                        font=dict(color="#fff", size=12),
+                    ),
+                    dragmode=False,
                 )
-                st.plotly_chart(fig, width="stretch")
+                fig.update_xaxes(fixedrange=True)
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                    key=f"spark_{opp['id']}",
+                )
 
-            # Footer row: vol + time left + price | platform watermark
+            # Footer: volume · time left | platform watermark
             st.markdown(
-                f'<div style="display: flex; justify-content: space-between; '
-                f"align-items: center; margin-top: 6px; padding-top: 8px; "
-                f'border-top: 1px solid rgba(255,255,255,0.06);">'
-                # Left side — stats
-                f'<div style="display: flex; gap: 14px; font-size: 0.75rem; '
-                f'color: rgba(255,255,255,0.4); font-weight: 500;">'
-                f"<span>${opp['current_price']:,.2f}</span>"
-                f"<span>{_fmt_vol(opp['volume'])} VOL</span>"
+                f'<div style="display:flex;justify-content:space-between;'
+                f"align-items:center;margin-top:4px;padding-top:8px;"
+                f'border-top:1px solid rgba(255,255,255,0.06);">'
+                f'<div style="display:flex;gap:14px;font-size:0.75rem;'
+                f'color:rgba(255,255,255,0.4);font-weight:500;">'
+                f"<span>{_fmt_vol(opp['volume'])} vol</span>"
                 f"<span>{_fmt_time(opp['hours_left'])}</span>"
                 f"</div>"
-                # Right side — platform watermark
-                f'<a href="{url}" target="_blank" style="text-decoration: none;">'
-                f'<span style="color: {badge_color}; font-size: 0.78rem; font-weight: 600; '
-                f'letter-spacing: 0.3px;">'
-                f"{badge_icon} {opp['platform']}</span></a>"
+                f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
+                f'letter-spacing:0.03em;color:#2E5CFF;">Polymarket</span>'
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-            # Signals line (only for markets with model estimates)
-            if opp["signals"]:
-                threshold_str = (
-                    f"${opp['threshold']:,.0f}" if opp.get("threshold") else ""
-                )
-                st.caption(
-                    f"{threshold_str} target · "
-                    + " · ".join(opp["signals"])
-                    + f" · {opp['confidence']}% confidence"
-                )
 
     _live_markets()

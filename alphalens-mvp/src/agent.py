@@ -49,6 +49,7 @@ Fetch ALL available data by calling these tools:
 3. get_funding_rate — derivatives sentiment
 4. get_open_interest — derivatives positioning
 5. get_technical_analysis — RSI, MACD, Bollinger Bands, moving averages
+6. get_prediction_markets — what Polymarket bettors think about price targets
 
 Then write the report in this structure:
 
@@ -67,6 +68,10 @@ RSI, MACD, moving averages, Bollinger Bands, key support/resistance levels.
 ## Derivatives Sentiment
 Funding rates, open interest, what the futures market is signaling.
 
+## Prediction Market Consensus
+What Polymarket bettors are pricing in — key price targets, probabilities, and volume.
+Which targets have the most conviction (highest volume)?
+
 ## Investment Thesis
 Bull case (3 data-backed points) vs Bear case (3 data-backed points).
 
@@ -83,7 +88,7 @@ Cite [Source] after every number.\
 def _get_client() -> tuple[OpenAI, str]:
     """Return (client, model_name) — prefers Gemini if key is present."""
     gemini_key = os.getenv("GEMINI_API_KEY")
-    openai_key  = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
+    openai_key = os.getenv("OPENAI_API_KEY") or os.getenv("gpt_api_key")
 
     if gemini_key:
         client = OpenAI(
@@ -151,14 +156,3 @@ def run_agent(
             )
 
     return "Analysis complete (reached tool-call limit).", tool_log
-
-
-def deep_dive(
-    symbol: str,
-    on_tool_call: Callable[[str, dict], None] | None = None,
-) -> tuple[str, list[dict]]:
-    """Generate a comprehensive research report for a token."""
-    return run_agent(
-        DEEP_DIVE_PROMPT.format(symbol=symbol),
-        on_tool_call=on_tool_call,
-    )
