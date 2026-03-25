@@ -276,6 +276,50 @@ def get_prediction_markets(symbol: str) -> dict:
     }
 
 
+def get_prediction_accuracy() -> dict:
+    """Get Polymarket historical accuracy — how well calibrated are the predictions."""
+    from src.polymarket import fetch_resolved_crypto_markets
+
+    try:
+        resolved = fetch_resolved_crypto_markets()
+    except Exception as e:
+        return {"error": str(e), "source": "Polymarket"}
+
+    if not resolved:
+        return {
+            "source": "Polymarket",
+            "message": "No resolved markets found",
+            "calibration": [],
+        }
+
+    buckets = [
+        (0, 0.3, "<30%"),
+        (0.3, 0.5, "30-50%"),
+        (0.5, 0.7, "50-70%"),
+        (0.7, 0.85, "70-85%"),
+        (0.85, 1.0, "85%+"),
+    ]
+    calibration = []
+    for lo, hi, label in buckets:
+        in_bucket = [r for r in resolved if lo <= r["prediction"] < hi]
+        if len(in_bucket) >= 3:
+            pct_yes = sum(1 for r in in_bucket if r["yes_won"]) / len(in_bucket) * 100
+            calibration.append(
+                {
+                    "bucket": label,
+                    "predicted_avg_pct": round((lo + hi) / 2 * 100, 1),
+                    "actual_yes_pct": round(pct_yes, 1),
+                    "sample_size": len(in_bucket),
+                }
+            )
+
+    return {
+        "source": "Polymarket",
+        "total_resolved": len(resolved),
+        "calibration": calibration,
+    }
+
+
 TOOL_DEFINITIONS = [
     {
         "type": "function",
@@ -288,7 +332,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH, SOL"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. BTC, ETH, SOL",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -305,7 +352,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. ETH, SOL, AVAX"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. ETH, SOL, AVAX",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -323,7 +373,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. BTC, ETH",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -337,7 +390,10 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. BTC, ETH",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -354,9 +410,19 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH"},
-                    "interval": {"type": "string", "enum": ["1m", "3m", "5m"], "description": "Candle interval"},
-                    "lookback": {"type": "integer", "description": "Number of candles to analyze"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. BTC, ETH",
+                    },
+                    "interval": {
+                        "type": "string",
+                        "enum": ["1m", "3m", "5m"],
+                        "description": "Candle interval",
+                    },
+                    "lookback": {
+                        "type": "integer",
+                        "description": "Number of candles to analyze",
+                    },
                 },
                 "required": ["symbol"],
             },
@@ -374,9 +440,28 @@ TOOL_DEFINITIONS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "symbol": {"type": "string", "description": "Crypto symbol, e.g. BTC, ETH, SOL"},
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol, e.g. BTC, ETH, SOL",
+                    },
                 },
                 "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_prediction_accuracy",
+            "description": (
+                "Get Polymarket historical accuracy — calibration data showing how often "
+                "predictions at different confidence levels were correct. Use this to assess "
+                "how much to trust current prediction market odds. Source: Polymarket."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -391,4 +476,5 @@ TOOL_DISPATCH = {
     "get_open_interest": get_open_interest,
     "get_technical_analysis": get_technical_analysis,
     "get_prediction_markets": get_prediction_markets,
+    "get_prediction_accuracy": get_prediction_accuracy,
 }

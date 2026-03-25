@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sqlite3
 import os
-from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "alphalens.db")
 
@@ -67,7 +66,17 @@ def upsert_kline(
                 volume    = excluded.volume,
                 is_closed = excluded.is_closed
             """,
-            (symbol, interval, open_time, open, high, low, close, volume, int(is_closed)),
+            (
+                symbol,
+                interval,
+                open_time,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                int(is_closed),
+            ),
         )
         conn.commit()
 
@@ -90,13 +99,3 @@ def get_klines(symbol: str, interval: str = "1m", limit: int = 100) -> list:
             (symbol, interval, limit),
         ).fetchall()
     return [tuple(r) for r in rows]
-
-
-def get_latest_price(symbol: str, interval: str = "1m") -> Optional[float]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT close FROM klines WHERE symbol = ? AND interval = ? "
-            "ORDER BY open_time DESC LIMIT 1",
-            (symbol, interval),
-        ).fetchone()
-    return row[0] if row else None
