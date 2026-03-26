@@ -10,6 +10,8 @@ import html
 import io
 import os
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,6 +21,7 @@ from dotenv import load_dotenv
 from docx import Document
 
 from src.database import init_db
+from src.indicators import add_indicators, indicator_summary
 from src.metric_tooltip import render_metric_with_tooltip
 from src.ws_client import BinanceKlineStream
 from src.orderbook import BinanceOrderBookStream
@@ -381,6 +384,20 @@ _CONSENSUS_BADGE_BG = {
     "XRP": "#346AA9",
 }
 
+# Signal Scanner — coin badge colors (ticker without USDT)
+SCANNER_COIN_BADGE_BG = {
+    "BTC": "#F7931A",
+    "ETH": "#627EEA",
+    "SOL": "#9945FF",
+    "XRP": "#346AA9",
+    "BNB": "#F3BA2F",
+    "ADA": "#0033AD",
+    "DOGE": "#C3A634",
+}
+SCANNER_BADGE_DEFAULT = "#6b7280"
+
+_QUICK_RESEARCH_PLACEHOLDER = "Choose a quick prompt…"
+
 
 def _consensus_prob_bar_color(prob: float) -> str:
     if prob <= 30:
@@ -575,6 +592,58 @@ def _inject_theme(t: dict) -> None:
             border-color: {t["border"]} !important;
             border-radius: {r} !important;
         }}
+
+        /* Signal Scanner table */
+        .alphalens-scanner-wrap {{
+            background: {t["card"]};
+            border: 1px solid {t["border"]};
+            border-radius: {r};
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }}
+        .alphalens-scanner-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }}
+        .alphalens-scanner-table thead th {{
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: {t["label"]};
+            border-bottom: 1px solid {t["border"]};
+            background: {t["card"]};
+        }}
+        .alphalens-scanner-row td {{
+            padding: 12px 16px;
+            vertical-align: top;
+            border-bottom: 1px solid {t["border_subtle"]};
+        }}
+        .alphalens-scanner-row:nth-child(even) td {{
+            background: {"rgba(0,0,0,0.02)" if is_light else "rgba(255,255,255,0.02)"};
+        }}
+        .alphalens-scanner-row:hover td {{
+            background: {"rgba(0,0,0,0.04)" if is_light else "rgba(255,255,255,0.05)"} !important;
+        }}
+        .alphalens-scanner-pill {{
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid {t["border"]};
+        }}
+        .alphalens-scanner-summary {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 1rem 0 1.25rem;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -612,6 +681,142 @@ if "scanner_coin_filter" not in st.session_state:
     st.session_state["scanner_coin_filter"] = ["All"]
 if "scanner_time_filter" not in st.session_state:
     st.session_state["scanner_time_filter"] = "All"
+if "scanner_interval" not in st.session_state:
+    st.session_state["scanner_interval"] = "5m"
+if "scanner_auto_refresh" not in st.session_state:
+    st.session_state["scanner_auto_refresh"] = True
+if "loaded_history" not in st.session_state:
+    st.session_state["loaded_history"] = set()
+
+SCANNER_DATA_LIMIT = 60
+SCANNER_CACHE_TTL = 30
+
+
+def _scanner_fetch_symbol_worker(
+    symbol: str,
+    interval: str,
+    limit: int,
+    loaded_snapshot: frozenset,
+):
+    """
+    Fetch klines + indicators for one symbol. Runs in a thread pool — do not use
+    st.session_state here; backfill keys are returned for the main thread to record.
+    """
+    from src.database import get_klines
+    from src.history import fetch_historical_klines
+
+    key = f"{symbol}_{interval}"
+    try:
+        raw = list(get_klines(symbol, interval=interval, limit=limit)) or []
+        backfill_key = None
+        if len(raw) < 20 and key not in loaded_snapshot:
+            fetch_historical_klines(symbol, interval, limit=limit)
+            raw = list(get_klines(symbol, interval=interval, limit=limit)) or []
+            backfill_key = key
+
+        if len(raw) < 20:
+            return symbol, None, backfill_key
+
+        df = pd.DataFrame(
+            raw,
+            columns=["open_time", "open", "high", "low", "close", "volume"],
+        )
+        df = add_indicators(df)
+        if df.empty or len(df) < 2:
+            return symbol, None, backfill_key
+        return symbol, df, backfill_key
+    except Exception:
+        return symbol, None, None
+
+
+def _scanner_get_fresh_cache(interval: str, force_refresh: bool):
+    """Return scanner_cache dict if TTL-valid and interval matches; else None."""
+    if force_refresh:
+        return None
+    cache = st.session_state.get("scanner_cache") or {}
+    ts = float(st.session_state.get("scanner_cache_ts", 0) or 0)
+    if cache.get("interval") != interval:
+        return None
+    if time.time() - ts >= SCANNER_CACHE_TTL:
+        return None
+    if not cache.get("rows"):
+        return None
+    return cache
+
+
+def _scanner_set_display_cache(interval: str, rows_out: list, ts_str: str) -> None:
+    st.session_state["scanner_cache"] = {
+        "interval": interval,
+        "rows": rows_out,
+        "ts_str": ts_str,
+    }
+    st.session_state["scanner_cache_ts"] = time.time()
+
+
+def _scanner_signal_counts(
+    rsi,
+    macd,
+    sig,
+    bb_pct,
+    sma20,
+    sma50,
+) -> tuple[int, int, int]:
+    """Bullish / bearish / neutral counts (0–1 each) across RSI, MACD, BB, trend."""
+    bull = bear = neutral = 0
+
+    if rsi is None or pd.isna(rsi):
+        neutral += 1
+    elif float(rsi) < 30:
+        bull += 1
+    elif float(rsi) > 70:
+        bear += 1
+    else:
+        neutral += 1
+
+    if macd is None or sig is None or pd.isna(macd) or pd.isna(sig):
+        neutral += 1
+    elif float(macd) > float(sig):
+        bull += 1
+    elif float(macd) < float(sig):
+        bear += 1
+    else:
+        neutral += 1
+
+    if bb_pct is None or pd.isna(bb_pct):
+        neutral += 1
+    elif float(bb_pct) < 20:
+        bull += 1
+    elif float(bb_pct) > 80:
+        bear += 1
+    else:
+        neutral += 1
+
+    if sma20 is None or sma50 is None or pd.isna(sma20) or pd.isna(sma50):
+        neutral += 1
+    else:
+        s20, s50 = float(sma20), float(sma50)
+        if s50 == 0:
+            neutral += 1
+        elif abs(s20 - s50) / abs(s50) < 0.001:
+            neutral += 1
+        elif s20 > s50:
+            bull += 1
+        else:
+            bear += 1
+
+    return bull, bear, neutral
+
+
+def _scanner_overall_label(bull: int, bear: int) -> str:
+    if bull >= 3:
+        return "🟢 Strong Buy"
+    if bear >= 3:
+        return "🔴 Strong Sell"
+    if bull == 2 and bear == 0:
+        return "🟡 Buy"
+    if bear == 2 and bull == 0:
+        return "🟡 Sell"
+    return "⚪ Neutral"
 
 
 def _archive_current_chat() -> None:
@@ -634,6 +839,22 @@ def _archive_current_chat() -> None:
     new_id = str(int(_time.time() * 1000))
     convs.append({"id": new_id, "title": title, "messages": [dict(m) for m in msgs]})
     st.session_state["active_conv_id"] = new_id
+
+
+def _on_quick_research_dropdown() -> None:
+    """Apply selected quick prompt to chat input; reset dropdown to placeholder."""
+    from src.prompts.quick_prompts import QUICK_PROMPTS as _qp
+
+    sel = st.session_state.get("quick_research_dropdown")
+    if not sel or sel == _QUICK_RESEARCH_PLACEHOLDER:
+        return
+    _pa = (st.session_state.get("dash_assets") or ["BTCUSDT"])[0]
+    _sym = str(_pa).replace("USDT", "")
+    for _l, _e, _tmpl in _qp:
+        if f"{_e} {_l}" == sel:
+            st.session_state["_chat_user_input"] = _tmpl.format(symbol=_sym)
+            break
+    st.session_state["quick_research_dropdown"] = _QUICK_RESEARCH_PLACEHOLDER
 
 
 # ── Sidebar (branding + theme) ─────────────────────────────────────────────────
@@ -659,10 +880,11 @@ _grid_color = "#e5e7eb" if _is_light_theme else "#2a2a2a"
 # TABS (main area — horizontal bar unchanged)
 # ════════════════════════════════════════════════════════════════════════════════
 
-tab_dashboard, tab_research, tab_scanner = st.tabs(
+tab_dashboard, tab_research, tab_signal_scanner, tab_prediction = st.tabs(
     [
         "📊 Dashboard",
         "💬 Chatbot",
+        "🔍 Signal Scanner",
         "🎯 Prediction Markets",
     ],
     on_change="rerun",
@@ -673,7 +895,9 @@ if tab_dashboard.open:
     st.session_state["active_tab"] = "Dashboard"
 elif tab_research.open:
     st.session_state["active_tab"] = "Chatbot"
-elif tab_scanner.open:
+elif tab_signal_scanner.open:
+    st.session_state["active_tab"] = "Signal Scanner"
+elif tab_prediction.open:
     st.session_state["active_tab"] = "Prediction Markets"
 else:
     st.session_state["active_tab"] = st.session_state.get("active_tab", "Dashboard")
@@ -765,6 +989,23 @@ with st.sidebar:
                     ]
                     st.session_state["active_conv_id"] = conv["id"]
                     st.rerun()
+    elif _at == "Signal Scanner":
+        _siv = st.session_state.get("scanner_interval", "5m")
+        _siv_ix = (
+            _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
+        )
+        st.selectbox(
+            "Candle interval",
+            _DASH_INTERVAL_OPTS,
+            index=_siv_ix,
+            key="scanner_interval",
+        )
+        if st.button(
+            "🔄 Refresh Signals", use_container_width=True, key="scanner_refresh_btn"
+        ):
+            st.session_state["_scanner_force_fetch"] = True
+            st.rerun()
+        st.toggle("Auto-refresh (30 s)", key="scanner_auto_refresh")
     elif _at == "Prediction Markets":
         st.toggle("Auto-refresh (5 s)", key="auto_refresh")
         st.multiselect(
@@ -1534,24 +1775,20 @@ with tab_research:
 
         _chatbot(primary.replace("USDT", ""))
 
-        # Quick buttons + chat_input must live OUTSIDE the fragment (Streamlit 1.55+)
+        # Quick preset + chat_input must live OUTSIDE the fragment (Streamlit 1.55+)
         from src.prompts.quick_prompts import QUICK_PROMPTS as _QP
 
-        st.markdown(
-            "<div style='margin:1rem 0 0.4rem; font-size:0.78rem; "
-            "color:rgba(255,255,255,0.45); letter-spacing:0.06em;'>"
-            "QUICK RESEARCH</div>",
-            unsafe_allow_html=True,
-        )
         _sym = primary.replace("USDT", "")
-        _btn_cols = st.columns(len(_QP))
-        for _i, (_label, _emoji, _tmpl) in enumerate(_QP):
-            with _btn_cols[_i]:
-                if st.button(
-                    f"{_emoji} {_label}", use_container_width=True, key=f"qp_{_i}"
-                ):
-                    st.session_state["_chat_user_input"] = _tmpl.format(symbol=_sym)
-                    st.rerun()
+        _qr_options = [_QUICK_RESEARCH_PLACEHOLDER] + [
+            f"{_e} {_l}" for _l, _e, _ in _QP
+        ]
+        st.selectbox(
+            "Quick research",
+            _qr_options,
+            key="quick_research_dropdown",
+            on_change=_on_quick_research_dropdown,
+            help="Pick a preset to fill the chat with a structured question.",
+        )
 
         _typed = st.chat_input(f"Ask about {_sym} or any crypto…")
         if _typed:
@@ -1559,11 +1796,403 @@ with tab_research:
             st.rerun()
 
 # ════════════════════════════════════════════════════════════════════════════════
-# TAB 4 — LIVE PREDICTION MARKETS
+# TAB — SIGNAL SCANNER
 # ════════════════════════════════════════════════════════════════════════════════
 
-with tab_scanner:
-    if tab_scanner.open:
+with tab_signal_scanner:
+    if tab_signal_scanner.open:
+        st.session_state["active_tab"] = "Signal Scanner"
+        _scan_auto = bool(st.session_state.get("scanner_auto_refresh", True))
+
+        @st.fragment(run_every=30 if _scan_auto else None)
+        def _signal_scanner_body():
+            from datetime import datetime, timezone
+
+            st.markdown("### 🔍 Signal Scanner")
+            iv = str(st.session_state.get("scanner_interval", "5m"))
+            force = bool(st.session_state.pop("_scanner_force_fetch", False))
+
+            cached = _scanner_get_fresh_cache(iv, force)
+            if cached:
+                cache = cached
+            else:
+                _load_msg = st.empty()
+                _load_msg.info("⚡ Loading signals for all assets…")
+                progress = st.progress(0)
+                loaded_snap = frozenset(st.session_state.get("loaded_history", set()))
+                n_sym = len(AVAILABLE_SYMBOLS)
+                results: dict = {}
+                new_backfill_keys: set = set()
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    futures = {
+                        executor.submit(
+                            _scanner_fetch_symbol_worker,
+                            sym,
+                            iv,
+                            SCANNER_DATA_LIMIT,
+                            loaded_snap,
+                        ): sym
+                        for sym in AVAILABLE_SYMBOLS
+                    }
+                    completed = 0
+                    for future in as_completed(futures):
+                        sym_r, df_r, bf_key = future.result()
+                        results[sym_r] = df_r
+                        if bf_key:
+                            new_backfill_keys.add(bf_key)
+                        completed += 1
+                        progress.progress(
+                            min(1.0, completed / n_sym) if n_sym else 1.0
+                        )
+
+                if new_backfill_keys:
+                    st.session_state.setdefault("loaded_history", set()).update(
+                        new_backfill_keys
+                    )
+
+                _load_msg.empty()
+                progress.empty()
+
+                rows_out: list[dict] = []
+                for sym in AVAILABLE_SYMBOLS:
+                    df = results.get(sym)
+                    if df is None:
+                        rows_out.append({"symbol": sym, "loading": True})
+                        continue
+                    last = df.iloc[-1]
+                    prev = df.iloc[-2]
+                    close_f = float(last["close"])
+                    prev_c = float(prev["close"])
+                    chg_pct = (
+                        ((close_f - prev_c) / prev_c) * 100 if prev_c else 0.0
+                    )
+
+                    rsi = last.get("rsi")
+                    macd = last.get("macd")
+                    sig = last.get("macd_signal")
+                    sma20 = last.get("sma_20")
+                    sma50 = last.get("sma_50")
+                    bb_u = last.get("bb_upper")
+                    bb_l = last.get("bb_lower")
+
+                    bb_pct = None
+                    if (
+                        bb_u is not None
+                        and bb_l is not None
+                        and not pd.isna(bb_u)
+                        and not pd.isna(bb_l)
+                    ):
+                        bw = float(bb_u) - float(bb_l)
+                        if bw > 0:
+                            bb_pct = (close_f - float(bb_l)) / bw * 100.0
+
+                    bull_c, bear_c, _neut_c = _scanner_signal_counts(
+                        rsi, macd, sig, bb_pct, sma20, sma50
+                    )
+                    overall = _scanner_overall_label(bull_c, bear_c)
+                    summ = indicator_summary(df)
+
+                    rows_out.append(
+                        {
+                            "symbol": sym,
+                            "loading": False,
+                            "close": close_f,
+                            "chg_pct": chg_pct,
+                            "rsi": rsi,
+                            "macd": macd,
+                            "sig": sig,
+                            "bb_pct": bb_pct,
+                            "sma20": sma20,
+                            "sma50": sma50,
+                            "overall": overall,
+                            "macd_hist": last.get("macd_hist"),
+                            "macd_note": summ.get("macd_crossover", ""),
+                        }
+                    )
+
+                ts_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+                _scanner_set_display_cache(iv, rows_out, ts_iso)
+                cache = st.session_state["scanner_cache"]
+
+            rows = list(cache.get("rows") or [])
+            ts_str = cache.get("ts_str", "—")
+            st.caption(
+                f"Live indicator snapshot across all tracked assets · {iv} candles · "
+                f"Updated {ts_str}"
+            )
+            _leg_muted = "#6b7280" if _is_light_theme else "#9ca3af"
+            st.markdown(
+                f'<p style="font-size:12px;color:{_leg_muted};margin:0 0 14px 0;">'
+                "<strong>Legend:</strong> Green = bullish signal · Red = bearish signal · "
+                "Gray = neutral</p>",
+                unsafe_allow_html=True,
+            )
+
+            t = _active_theme
+            g_txt = t["green"]
+            r_txt = t["red"]
+            g_cell = (
+                "rgba(22,163,74,0.12)"
+                if _is_light_theme
+                else "rgba(34,197,94,0.15)"
+            )
+            r_cell = (
+                "rgba(220,38,38,0.12)"
+                if _is_light_theme
+                else "rgba(239,68,68,0.15)"
+            )
+            n_cell = (
+                "rgba(0,0,0,0.04)"
+                if _is_light_theme
+                else "rgba(255,255,255,0.05)"
+            )
+            n_txt = "#6b7280" if _is_light_theme else "#9ca3af"
+            desc_clr = "#6b7280" if _is_light_theme else "#9ca3af"
+
+            def _rsi_style(rv):
+                if rv is None or pd.isna(rv):
+                    return n_cell, n_txt, "neutral"
+                v = float(rv)
+                if v < 30:
+                    return g_cell, g_txt, "oversold"
+                if v > 70:
+                    return r_cell, r_txt, "overbought"
+                return n_cell, n_txt, "neutral"
+
+            def _macd_style(mv, sv):
+                if mv is None or sv is None or pd.isna(mv) or pd.isna(sv):
+                    return n_cell, n_txt, "neutral"
+                if float(mv) > float(sv):
+                    return g_cell, g_txt, "bullish"
+                if float(mv) < float(sv):
+                    return r_cell, r_txt, "bearish"
+                return n_cell, n_txt, "neutral"
+
+            def _bb_style(pv):
+                if pv is None or pd.isna(pv):
+                    return n_cell, n_txt, "mid-band"
+                v = float(pv)
+                if v < 20:
+                    return g_cell, g_txt, "near bottom"
+                if v > 80:
+                    return r_cell, r_txt, "near top"
+                return n_cell, n_txt, "mid-band"
+
+            def _trend_html(s20, s50):
+                if (
+                    s20 is None
+                    or s50 is None
+                    or pd.isna(s20)
+                    or pd.isna(s50)
+                    or float(s50) == 0
+                ):
+                    return f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                a20, a50 = float(s20), float(s50)
+                if abs(a20 - a50) / abs(a50) < 0.001:
+                    return f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                if a20 > a50:
+                    return f'<span style="color:{g_txt};font-weight:600;">↑ Bullish</span>'
+                return f'<span style="color:{r_txt};font-weight:600;">↓ Bearish</span>'
+
+            th = (
+                f'<thead><tr>'
+                f'<th>Asset</th><th>Price</th><th>RSI (14)</th><th>MACD</th>'
+                f'<th>BB Position</th><th>Trend</th><th>Overall Signal</th>'
+                f"</tr></thead>"
+            )
+            tb_parts: list[str] = []
+            for rw in rows:
+                sym = rw["symbol"]
+                tick = sym.replace("USDT", "")
+                badge = SCANNER_COIN_BADGE_BG.get(tick, SCANNER_BADGE_DEFAULT)
+                if rw.get("loading"):
+                    tb_parts.append(
+                        "<tr class='alphalens-scanner-row'>"
+                        f'<td><span style="display:inline-flex;align-items:center;justify-content:center;'
+                        f"min-width:38px;padding:3px 9px;border-radius:9999px;background:{badge};"
+                        f'color:#fff;font-weight:700;font-size:11px;">{html.escape(tick)}</span></td>'
+                        f'<td colspan="6" style="color:{desc_clr};font-size:12px;font-style:italic;">'
+                        "loading…</td></tr>"
+                    )
+                    continue
+
+                chg = rw["chg_pct"]
+                chg_c = g_txt if chg >= 0 else r_txt
+                rsi = rw["rsi"]
+                bg_rsi, fg_rsi, lb_rsi = _rsi_style(rsi)
+                macd = rw["macd"]
+                sigv = rw["sig"]
+                bg_m, fg_m, lb_m = _macd_style(macd, sigv)
+                bbp = rw["bb_pct"]
+                bg_b, fg_b, lb_b = _bb_style(bbp)
+
+                rsi_disp = f"{float(rsi):.1f}" if rsi is not None and not pd.isna(rsi) else "—"
+                macd_disp = (
+                    f"{float(macd):.4f}"
+                    if macd is not None and not pd.isna(macd)
+                    else "—"
+                )
+                bb_disp = (
+                    f"{float(bbp):.0f}%"
+                    if bbp is not None and not pd.isna(bbp)
+                    else "—"
+                )
+
+                tb_parts.append(
+                    "<tr class='alphalens-scanner-row'>"
+                    f'<td><span style="display:inline-flex;align-items:center;justify-content:center;'
+                    f"min-width:38px;padding:3px 9px;border-radius:9999px;background:{badge};"
+                    f'color:#fff;font-weight:700;font-size:11px;">{html.escape(tick)}</span></td>'
+                    f"<td><div style='font-weight:600;color:{t['text']};'>"
+                    f"${rw['close']:,.2f}</div>"
+                    f"<div style='font-size:10px;color:{chg_c};margin-top:2px;'>"
+                    f"{chg:+.2f}%</div></td>"
+                    f"<td style='background:{bg_rsi};color:{fg_rsi};'>"
+                    f"<div style='font-weight:600;'>{rsi_disp}</div>"
+                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_rsi}</div></td>"
+                    f"<td style='background:{bg_m};color:{fg_m};'>"
+                    f"<div style='font-weight:600;'>{macd_disp}</div>"
+                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_m}</div></td>"
+                    f"<td style='background:{bg_b};color:{fg_b};'>"
+                    f"<div style='font-weight:600;'>{bb_disp}</div>"
+                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_b}</div></td>"
+                    f"<td>{_trend_html(rw['sma20'], rw['sma50'])}</td>"
+                    f"<td style='font-weight:700;color:{t['text']};'>{rw['overall']}</td>"
+                    "</tr>"
+                )
+
+            st.markdown(
+                '<div class="alphalens-scanner-wrap">'
+                '<table class="alphalens-scanner-table">'
+                + th
+                + "<tbody>"
+                + "".join(tb_parts)
+                + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+
+            done_rows = [r for r in rows if not r.get("loading")]
+            n_bull = sum(
+                1
+                for r in done_rows
+                if r.get("overall") in ("🟢 Strong Buy", "🟡 Buy")
+            )
+            n_bear = sum(
+                1
+                for r in done_rows
+                if r.get("overall") in ("🔴 Strong Sell", "🟡 Sell")
+            )
+            n_neu = sum(1 for r in done_rows if r.get("overall") == "⚪ Neutral")
+            n_str = sum(
+                1
+                for r in done_rows
+                if r.get("overall") in ("🟢 Strong Buy", "🔴 Strong Sell")
+            )
+            st.markdown(
+                f'<div class="alphalens-scanner-summary">'
+                f'<span class="alphalens-scanner-pill" style="color:{g_txt};">🟢 {n_bull} Bullish</span>'
+                f'<span class="alphalens-scanner-pill" style="color:{r_txt};">🔴 {n_bear} Bearish</span>'
+                f'<span class="alphalens-scanner-pill" style="color:{n_txt};">⚪ {n_neu} Neutral</span>'
+                f'<span class="alphalens-scanner-pill" style="color:{t["accent_text"]};">'
+                f"⚡ {n_str} Strong Signals</span></div>",
+                unsafe_allow_html=True,
+            )
+
+            oversold = [
+                r
+                for r in done_rows
+                if r.get("rsi") is not None
+                and not pd.isna(r["rsi"])
+                and float(r["rsi"]) < 35
+            ]
+            overbought = [
+                r
+                for r in done_rows
+                if r.get("rsi") is not None
+                and not pd.isna(r["rsi"])
+                and float(r["rsi"]) > 65
+            ]
+            macd_div = [
+                r
+                for r in done_rows
+                if r.get("macd_hist") is not None and not pd.isna(r["macd_hist"])
+            ]
+
+            opp_blocks: list[str] = []
+            if oversold:
+                best = min(oversold, key=lambda x: float(x["rsi"]))
+                tk = best["symbol"].replace("USDT", "")
+                bg = SCANNER_COIN_BADGE_BG.get(tk, SCANNER_BADGE_DEFAULT)
+                rv = float(best["rsi"])
+                opp_blocks.append(
+                    f'<div style="background:{t["card"]};border:1px solid {t["border"]};'
+                    f'border-radius:{t["radius"]};padding:14px 18px;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<span style="display:inline-flex;min-width:38px;padding:3px 9px;'
+                    f"border-radius:9999px;background:{bg};color:#fff;font-weight:700;"
+                    f'font-size:11px;">{html.escape(tk)}</span>'
+                    f'<span style="font-weight:700;color:{g_txt};">Most oversold</span></div>'
+                    f'<div style="font-size:1.25rem;font-weight:600;color:{t["text"]};">'
+                    f"RSI {rv:.1f}</div>"
+                    f'<p style="margin:8px 0 0;font-size:12px;color:{desc_clr};line-height:1.4;">'
+                    f"RSI at {rv:.1f} — historically oversold territory.</p></div>"
+                )
+            if overbought:
+                worst = max(overbought, key=lambda x: float(x["rsi"]))
+                tk = worst["symbol"].replace("USDT", "")
+                bg = SCANNER_COIN_BADGE_BG.get(tk, SCANNER_BADGE_DEFAULT)
+                rv = float(worst["rsi"])
+                opp_blocks.append(
+                    f'<div style="background:{t["card"]};border:1px solid {t["border"]};'
+                    f'border-radius:{t["radius"]};padding:14px 18px;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<span style="display:inline-flex;min-width:38px;padding:3px 9px;'
+                    f"border-radius:9999px;background:{bg};color:#fff;font-weight:700;"
+                    f'font-size:11px;">{html.escape(tk)}</span>'
+                    f'<span style="font-weight:700;color:{r_txt};">Most overbought</span></div>'
+                    f'<div style="font-size:1.25rem;font-weight:600;color:{t["text"]};">'
+                    f"RSI {rv:.1f}</div>"
+                    f'<p style="margin:8px 0 0;font-size:12px;color:{desc_clr};line-height:1.4;">'
+                    f"RSI at {rv:.1f} — stretched toward overbought.</p></div>"
+                )
+            if macd_div:
+                best_m = max(macd_div, key=lambda x: abs(float(x["macd_hist"])))
+                tk = best_m["symbol"].replace("USDT", "")
+                bg = SCANNER_COIN_BADGE_BG.get(tk, SCANNER_BADGE_DEFAULT)
+                hv = float(best_m["macd_hist"])
+                _mn = html.escape(str(best_m.get("macd_note") or ""))
+                opp_blocks.append(
+                    f'<div style="background:{t["card"]};border:1px solid {t["border"]};'
+                    f'border-radius:{t["radius"]};padding:14px 18px;margin-bottom:10px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+                    f'<span style="display:inline-flex;min-width:38px;padding:3px 9px;'
+                    f"border-radius:9999px;background:{bg};color:#fff;font-weight:700;"
+                    f'font-size:11px;">{html.escape(tk)}</span>'
+                    f'<span style="font-weight:700;color:{t["accent_text"]};">'
+                    f"Strongest MACD histogram</span></div>"
+                    f'<div style="font-size:1.25rem;font-weight:600;color:{t["text"]};">'
+                    f"Hist {hv:+.4f}</div>"
+                    f'<p style="margin:8px 0 0;font-size:12px;color:{desc_clr};line-height:1.4;">'
+                    f"{_mn or 'Largest histogram reading in this scan — momentum stands out vs peers.'}"
+                    "</p></div>"
+                )
+
+            if opp_blocks:
+                st.markdown(
+                    '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.08em;'
+                    f'color:{t["label"]};margin:20px 0 10px 0;">TOP OPPORTUNITIES</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown("".join(opp_blocks), unsafe_allow_html=True)
+
+        _signal_scanner_body()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB — LIVE PREDICTION MARKETS
+# ════════════════════════════════════════════════════════════════════════════════
+
+with tab_prediction:
+    if tab_prediction.open:
         st.session_state["active_tab"] = "Prediction Markets"
         st.markdown("### 🎯 Live Prediction Markets")
         st.caption("Auto-refreshing every 30s · Polymarket")
