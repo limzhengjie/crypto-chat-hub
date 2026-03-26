@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from docx import Document
 
 from src.database import init_db
+from src.metric_tooltip import render_metric_with_tooltip
 from src.ws_client import BinanceKlineStream
 from src.orderbook import BinanceOrderBookStream
 from src.history import fetch_historical_klines
@@ -429,6 +430,14 @@ def _inject_theme(t: dict) -> None:
         [data-testid="stMetricDelta"] {{ font-size: 0.78rem !important; font-weight: 500 !important; }}
         [data-testid="stMetricDelta"] svg {{ display: none; }}
 
+        /* Metric help icon (native st.metric help=) — subtle, matches prior “i” intent */
+        [data-testid="stMetric"] [data-testid="stMetricLabel"] button {{
+            color: #6b7280 !important;
+        }}
+        [data-testid="stMetric"] [data-testid="stMetricLabel"] button:hover {{
+            color: {t["text"]} !important;
+        }}
+
         /* Tabs — clean underline style */
         .stTabs [data-baseweb="tab-list"] {{
             gap: 0; background: transparent; border-radius: 0;
@@ -833,14 +842,27 @@ with tab_dashboard:
 
                 # Row 1 — price metrics
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric(
+                render_metric_with_tooltip(
+                    c1,
                     "Price (USDT)",
                     f"${latest['close']:,.2f}",
                     f"{dollar_chg:+,.2f} ({pct:+.2f}%)",
                 )
-                c2.metric("Period High", f"${df['high'].max():,.2f}")
-                c3.metric("Period Low", f"${df['low'].min():,.2f}")
-                c4.metric("Volume", f"{df['volume'].sum():,.0f}")
+                render_metric_with_tooltip(
+                    c2,
+                    "Period High",
+                    f"${df['high'].max():,.2f}",
+                )
+                render_metric_with_tooltip(
+                    c3,
+                    "Period Low",
+                    f"${df['low'].min():,.2f}",
+                )
+                render_metric_with_tooltip(
+                    c4,
+                    "Volume",
+                    f"{df['volume'].sum():,.0f}",
+                )
 
                 # Row 2 — technical indicators
                 rsi_val = latest.get("rsi")
@@ -850,7 +872,8 @@ with tab_dashboard:
                 bb_lo = latest.get("bb_lower")
 
                 t1, t2, t3 = st.columns(3)
-                t1.metric(
+                render_metric_with_tooltip(
+                    t1,
                     "RSI (14)",
                     f"{rsi_val:.1f}" if rsi_val and not pd.isna(rsi_val) else "—",
                     "overbought"
@@ -859,7 +882,8 @@ with tab_dashboard:
                     if (rsi_val and rsi_val < 30)
                     else "neutral",
                 )
-                t2.metric(
+                render_metric_with_tooltip(
+                    t2,
                     "MACD",
                     f"{macd_val:.4f}" if macd_val and not pd.isna(macd_val) else "—",
                     "▲ bullish"
@@ -869,7 +893,8 @@ with tab_dashboard:
                 if bb_up and bb_lo and not pd.isna(bb_up):
                     bw = bb_up - bb_lo
                     bpos = (latest["close"] - bb_lo) / bw * 100 if bw > 0 else 50
-                    t3.metric(
+                    render_metric_with_tooltip(
+                        t3,
                         "BB Position",
                         f"{bpos:.0f}%",
                         "near top"
@@ -879,7 +904,7 @@ with tab_dashboard:
                         else "mid-band",
                     )
                 else:
-                    t3.metric("BB Position", "—")
+                    render_metric_with_tooltip(t3, "BB Position", "—")
 
                 fig = go.Figure()
                 fig.add_trace(
