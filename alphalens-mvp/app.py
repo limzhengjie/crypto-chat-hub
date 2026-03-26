@@ -535,11 +535,12 @@ def _inject_theme(t: dict) -> None:
         }}
         .stButton > button[kind="primary"]:hover {{ background: {t["accent_hover"]}; }}
 
-        /* Status badge */
+        /* Status badge (dashboard live strip — keep clear of metrics below) */
         .status-bar {{
             display: inline-flex; align-items: center; gap: 8px;
             background: {t["card"]}; border: 1px solid {t["border"]};
             border-radius: 20px; padding: 5px 14px;
+            margin-bottom: 1rem;
             font-size: 0.75rem; color: {t["text_muted"]}; font-weight: 500;
         }}
         .status-bar .dot {{
