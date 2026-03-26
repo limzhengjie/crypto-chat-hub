@@ -6,6 +6,7 @@ Chat      : Ask anything → GPT-4o agent fetches from CoinGecko, DefiLlama, Bin
 Deep Dive : One-click comprehensive report from all data sources
 """
 
+import html
 import io
 import os
 import re
@@ -372,6 +373,22 @@ THEMES = {
     },
 }
 
+# Prediction Markets — Market Consensus row visuals (badge colors + probability scale)
+_CONSENSUS_BADGE_BG = {
+    "BTC": "#F7931A",
+    "ETH": "#627EEA",
+    "SOL": "#9945FF",
+    "XRP": "#346AA9",
+}
+
+
+def _consensus_prob_bar_color(prob: float) -> str:
+    if prob <= 30:
+        return "#ef4444"
+    if prob <= 60:
+        return "#f59e0b"
+    return "#22c55e"
+
 
 def _inject_theme(t: dict) -> None:
     """Inject professional CSS — no gradients, no glow, just clean spacing."""
@@ -401,8 +418,19 @@ def _inject_theme(t: dict) -> None:
         section[data-testid="stSidebar"] .stCaption, section[data-testid="stSidebar"] small {{
             color: {t["label"]} !important;
         }}
-        section[data-testid="stSidebar"] [data-baseweb="select"] * {{
+        /* Single select: paint control + children for contrast. */
+        section[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] * {{
             color: {t["text"]} !important; background-color: {t["card"]} !important;
+        }}
+        /*
+         * Multiselect: do not set background on every descendant — Base Web tag layout
+         * clips the first letter when inner nodes are fully painted (sidebar coin filter).
+         */
+        section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="select"] {{
+            background-color: {t["card"]} !important;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="select"] * {{
+            color: {t["text"]} !important;
         }}
         section[data-testid="stSidebar"] button {{
             background: {t["card"]} !important; color: {t["text_muted"]} !important;
@@ -519,6 +547,27 @@ def _inject_theme(t: dict) -> None:
             background: {t["green"]}; display: inline-block;
         }}
         .status-bar .dot.off {{ background: {t["red"]}; }}
+
+        /* Market Consensus card — row layout + live dot (Prediction Markets tab) */
+        @keyframes alphalens-consensus-pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.42; }}
+        }}
+        .alphalens-consensus-live-dot {{
+            width: 6px; height: 6px; border-radius: 50%;
+            background: {t["green"]}; flex-shrink: 0;
+            animation: alphalens-consensus-pulse 1.8s ease-in-out infinite;
+        }}
+        .alphalens-consensus-row {{
+            display: flex; align-items: center; gap: 14px;
+            padding: 12px 16px;
+            border-bottom: {"1px solid rgba(0,0,0,0.08)" if is_light else "1px solid rgba(55, 65, 81, 0.5)"};
+            transition: background 0.12s ease;
+        }}
+        .alphalens-consensus-row:last-child {{ border-bottom: none; }}
+        .alphalens-consensus-row:hover {{
+            background: {"rgba(0,0,0,0.04)" if is_light else "rgba(255,255,255,0.05)"};
+        }}
 
         /* Containers with border — prediction market cards */
         [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) {{
@@ -1633,7 +1682,7 @@ with tab_scanner:
 
                 _now = datetime.now(_tz.utc)
 
-                lines = []
+                consensus_rows: list[dict] = []
                 for sym_key in sorted(
                     coin_targets,
                     key=lambda s: sum(m["volume"] for m in coin_targets[s]),
@@ -1659,21 +1708,65 @@ with tab_scanner:
                     exp_dt = _now + timedelta(hours=h)
                     by_when = exp_dt.strftime("by %b %d")
 
-                    lines.append(
-                        f"**{coin_name}**: {best['market_odds']:.0f}% chance "
-                        f"{best['direction']} ${best['threshold']:,.0f} {by_when}"
+                    consensus_rows.append(
+                        {
+                            "ticker": coin_name,
+                            "pct": float(best["market_odds"]),
+                            "direction": best.get("direction", "above"),
+                            "threshold": best["threshold"],
+                            "by_when": by_when,
+                        }
                     )
 
-                if lines:
-                    st.markdown(
-                        '<div style="background:rgba(124,131,253,0.06);border:1px solid rgba(124,131,253,0.12);'
-                        'border-radius:10px;padding:12px 16px;margin-bottom:16px;">'
-                        '<div style="font-size:0.72rem;font-weight:600;color:rgba(255,255,255,0.4);'
-                        'letter-spacing:0.08em;margin-bottom:6px;">MARKET CONSENSUS</div>'
-                        + "<br>".join(lines)
-                        + "</div>",
-                        unsafe_allow_html=True,
-                    )
+                if consensus_rows:
+                    _t = _active_theme
+                    _desc_clr = "#4b5563" if _is_light_theme else "#d1d5db"
+                    _track_clr = "#d1d5db" if _is_light_theme else "#374151"
+                    _html_parts: list[str] = [
+                        f'<div style="background:{_t["card"]};border:1px solid {_t["border"]};'
+                        f'border-top:2px solid #f59e0b;border-radius:{_t["radius"]};margin-bottom:16px;">'
+                        '<div style="display:flex;align-items:center;justify-content:space-between;'
+                        'flex-wrap:wrap;gap:8px;padding:10px 16px 6px 16px;">'
+                        '<div style="display:flex;align-items:center;gap:8px;">'
+                        '<span class="alphalens-consensus-live-dot"></span>'
+                        f'<span style="font-size:0.72rem;font-weight:600;color:{_t["label"]};'
+                        'letter-spacing:0.08em;text-transform:uppercase;">MARKET CONSENSUS</span>'
+                        "</div>"
+                        '<span style="font-size:10px;color:#6b7280;">Powered by Polymarket</span>'
+                        "</div>"
+                    ]
+                    for crow in consensus_rows:
+                        _tick = crow["ticker"]
+                        _pct = crow["pct"]
+                        _dir = crow["direction"]
+                        _thr = crow["threshold"]
+                        _by = crow["by_when"]
+                        _badge = _CONSENSUS_BADGE_BG.get(_tick, "#64748b")
+                        _bar_c = _consensus_prob_bar_color(_pct)
+                        _fill = min(100.0, max(0.0, _pct))
+                        _line = (
+                            f"{_pct:.0f}% chance {_dir} ${_thr:,.0f} {_by}"
+                        )
+                        _html_parts.append(
+                            '<div class="alphalens-consensus-row">'
+                            f'<span style="display:inline-flex;align-items:center;justify-content:center;'
+                            f"min-width:38px;padding:3px 9px;border-radius:9999px;background:{_badge};"
+                            f'color:#fff;font-weight:700;font-size:11px;line-height:1;flex-shrink:0;">'
+                            f"{html.escape(_tick)}</span>"
+                            f'<span style="flex:1;min-width:0;font-size:13px;color:{_desc_clr};line-height:1.45;">'
+                            f"{html.escape(_line)}</span>"
+                            '<div style="display:flex;align-items:center;gap:10px;flex-shrink:0;'
+                            'width:128px;max-width:36%;">'
+                            f'<div style="flex:1;height:4px;background:{_track_clr};border-radius:2px;'
+                            f'overflow:hidden;min-width:52px;">'
+                            f'<div style="width:{_fill:.2f}%;height:100%;background:{_bar_c};'
+                            f'border-radius:2px;"></div></div>'
+                            f'<span style="font-weight:700;font-size:12px;color:{_bar_c};min-width:38px;'
+                            f'text-align:right;white-space:nowrap;">'
+                            f"{_pct:.0f}%</span></div></div>"
+                        )
+                    _html_parts.append("</div>")
+                    st.markdown("".join(_html_parts), unsafe_allow_html=True)
 
             # ── Event grouping — top 2 by volume get histogram ─────────────────
             event_groups: dict[str, list[dict]] = defaultdict(list)
