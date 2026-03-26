@@ -990,22 +990,46 @@ with st.sidebar:
                     st.session_state["active_conv_id"] = conv["id"]
                     st.rerun()
     elif _at == "Signal Scanner":
+        _ss_lbl = _active_theme["label"]
+        st.markdown(
+            f"<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
+            f"color:{_ss_lbl}; margin-bottom:6px;'>SIGNAL SCANNER</div>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "All listed assets use one timeframe. Data comes from the local store; "
+            "missing history backfills once per symbol."
+        )
         _siv = st.session_state.get("scanner_interval", "5m")
         _siv_ix = (
             _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
         )
         st.selectbox(
-            "Candle interval",
+            "Scanner timeframe",
             _DASH_INTERVAL_OPTS,
             index=_siv_ix,
             key="scanner_interval",
+            help="Kline size for RSI, MACD, Bollinger, and MA trend in the table.",
+        )
+        st.divider()
+        st.markdown(
+            f"<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
+            f"color:{_ss_lbl}; margin-bottom:8px;'>DATA REFRESH</div>",
+            unsafe_allow_html=True,
         )
         if st.button(
-            "🔄 Refresh Signals", use_container_width=True, key="scanner_refresh_btn"
+            "🔄 Refresh signals",
+            use_container_width=True,
+            key="scanner_refresh_btn",
+            help="Pull latest candles and recompute every row now (ignores the 30s cache).",
         ):
             st.session_state["_scanner_force_fetch"] = True
             st.rerun()
-        st.toggle("Auto-refresh (30 s)", key="scanner_auto_refresh")
+        st.toggle(
+            "Auto-refresh (30 s)",
+            key="scanner_auto_refresh",
+            help="On this tab, reloads the scanner on a timer. Off = update only when you refresh or change timeframe.",
+        )
     elif _at == "Prediction Markets":
         st.toggle("Auto-refresh (5 s)", key="auto_refresh")
         st.multiselect(
