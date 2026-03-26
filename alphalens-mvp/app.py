@@ -1035,10 +1035,13 @@ with tab_dashboard:
                 fig.update_layout(
                     template=_plotly_template,
                     height=540,
-                    margin=dict(l=0, r=0, t=40, b=0),
+                    margin=dict(t=78, l=60, r=56, b=40),
                     title=dict(
-                        text=f"{primary} · {interval}  |  SMA20  SMA50  BB",
-                        font=dict(size=14),
+                        text=f"{primary} · {interval}  |  SMA 20  SMA 50  BB",
+                        x=0.01,
+                        xanchor="left",
+                        pad=dict(b=10),
+                        font=dict(size=13, color="#aaaaaa"),
                     ),
                     xaxis=dict(showgrid=True, gridcolor=_grid_color),
                     yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor=_grid_color),
@@ -1047,7 +1050,13 @@ with tab_dashboard:
                     ),
                     xaxis_rangeslider_visible=False,
                     legend=dict(
-                        orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=0.99,
+                        font=dict(size=11),
+                        bgcolor="rgba(0,0,0,0)",
                     ),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
@@ -1139,11 +1148,17 @@ with tab_dashboard:
                     fig_ind.update_layout(
                         template=_plotly_template,
                         height=420,
-                        margin=dict(l=0, r=0, t=40, b=0),
+                        margin=dict(t=56, l=60, r=40, b=64),
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
                         legend=dict(
-                            orientation="h", yanchor="bottom", y=1.02, font=dict(size=11)
+                            orientation="h",
+                            yanchor="top",
+                            y=-0.12,
+                            xanchor="center",
+                            x=0.5,
+                            font=dict(size=11),
+                            bgcolor="rgba(0,0,0,0)",
                         ),
                         showlegend=True,
                     )
@@ -1190,10 +1205,13 @@ with tab_dashboard:
                 fig_comp.update_layout(
                     template=_plotly_template,
                     height=360,
-                    margin=dict(l=0, r=0, t=40, b=0),
+                    margin=dict(t=78, l=60, r=56, b=40),
                     title=dict(
                         text="Relative % Change (normalized to period start = 0%)",
-                        font=dict(size=14),
+                        x=0.01,
+                        xanchor="left",
+                        pad=dict(b=10),
+                        font=dict(size=13, color="#aaaaaa"),
                     ),
                     yaxis=dict(
                         title="% Change",
@@ -1204,7 +1222,15 @@ with tab_dashboard:
                     xaxis=dict(showgrid=True, gridcolor=_grid_color),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=0.99,
+                        font=dict(size=11),
+                        bgcolor="rgba(0,0,0,0)",
+                    ),
                     hovermode="x unified",
                 )
                 st.plotly_chart(fig_comp, width="stretch")
