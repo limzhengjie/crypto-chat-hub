@@ -29,6 +29,7 @@ Available tools:
 - get_open_interest     → futures open interest — positioning size [Binance]
 - get_technical_analysis → RSI, MACD, Bollinger Bands, moving averages [Binance live]
 - get_prediction_markets → crowd-sourced probability markets for price events [Polymarket]
+- get_crypto_news         → latest news headlines, sentiment, and sources [CryptoCompare]
 
 Rules:
 - Cite source in [brackets] after every data point: "BTC is at $67,200 [Binance]"
@@ -50,6 +51,7 @@ Fetch ALL available data by calling these tools:
 4. get_open_interest — derivatives positioning
 5. get_technical_analysis — RSI, MACD, Bollinger Bands, moving averages
 6. get_prediction_markets — what Polymarket bettors think about price targets
+7. get_crypto_news — latest headlines and market-moving stories
 
 Then write the report in this structure:
 

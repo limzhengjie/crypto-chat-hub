@@ -8,6 +8,7 @@ for citation. Results are cached in-memory for 60s to stay within rate limits.
 from __future__ import annotations
 
 import json
+import re
 import time
 
 import pandas as pd
@@ -320,6 +321,130 @@ def get_prediction_accuracy() -> dict:
     }
 
 
+NEWS_FEEDS = {
+    "CoinTelegraph": "https://cointelegraph.com/rss",
+    "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+    "Decrypt": "https://decrypt.co/feed",
+    "The Block": "https://www.theblock.co/rss.xml",
+    "Blockworks": "https://blockworks.co/feed",
+    "Bitcoin Magazine": "https://bitcoinmagazine.com/.rss/full/",
+}
+
+_news_cache: dict[str, tuple] = {}
+_NEWS_CACHE_TTL = 120
+
+
+def _parse_rss(source_name: str, url: str) -> list[dict]:
+    """Fetch and parse a single RSS feed into article dicts."""
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+
+    cache_key = f"rss:{url}"
+    if cache_key in _news_cache:
+        data, ts = _news_cache[cache_key]
+        if time.time() - ts < _NEWS_CACHE_TTL:
+            return data
+
+    try:
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "AlphaLens/1.0"})
+        resp.raise_for_status()
+    except Exception:
+        return []
+
+    articles = []
+    try:
+        root = ET.fromstring(resp.text)
+        items = root.findall(".//item")[:10]
+        for item in items:
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            desc = (item.findtext("description") or "").strip()
+            pub_date = (item.findtext("pubDate") or "").strip()
+
+            # Strip HTML tags from description
+            desc = re.sub(r"<[^>]+>", "", desc)[:300]
+
+            published_ts = 0
+            if pub_date:
+                try:
+                    published_ts = int(parsedate_to_datetime(pub_date).timestamp())
+                except Exception:
+                    pass
+
+            if title:
+                articles.append(
+                    {
+                        "title": title,
+                        "url": link,
+                        "source_name": source_name,
+                        "body": desc,
+                        "published_on": published_ts,
+                    }
+                )
+    except Exception:
+        pass
+
+    _news_cache[cache_key] = (articles, time.time())
+    return articles
+
+
+def get_crypto_news(symbol: str = "") -> dict:
+    """Latest crypto news from major outlets, optionally filtered by coin keyword."""
+    raw = _sym(symbol) if symbol else ""
+
+    all_articles: list[dict] = []
+    for name, url in NEWS_FEEDS.items():
+        all_articles.extend(_parse_rss(name, url))
+
+    # Sort by publish time (newest first)
+    all_articles.sort(key=lambda a: a["published_on"], reverse=True)
+
+    # Filter by symbol keyword in title or body
+    if raw:
+        keyword = raw.lower()
+        # Also match full names for common coins
+        aliases = {
+            "BTC": ["bitcoin", "btc"],
+            "ETH": ["ethereum", "eth", "ether"],
+            "SOL": ["solana", "sol"],
+            "BNB": ["bnb", "binance coin"],
+            "XRP": ["xrp", "ripple"],
+            "DOGE": ["doge", "dogecoin"],
+            "ADA": ["ada", "cardano"],
+            "AVAX": ["avax", "avalanche"],
+            "DOT": ["dot", "polkadot"],
+            "LINK": ["link", "chainlink"],
+            "UNI": ["uni", "uniswap"],
+            "NEAR": ["near protocol", "near"],
+            "ARB": ["arb", "arbitrum"],
+            "SUI": ["sui"],
+            "APT": ["apt", "aptos"],
+        }
+        terms = aliases.get(raw, [keyword])
+        all_articles = [
+            a
+            for a in all_articles
+            if any(t in a["title"].lower() or t in a["body"].lower() for t in terms)
+        ]
+
+    articles = all_articles[:15]
+
+    if not articles:
+        return {
+            "source": "RSS (CoinDesk, CoinTelegraph, The Block, Decrypt, Blockworks, Bitcoin Magazine)",
+            "symbol": raw or "ALL",
+            "articles": [],
+            "message": f"No recent news found{' for ' + raw if raw else ''}.",
+        }
+
+    return {
+        "source": "RSS (CoinDesk, CoinTelegraph, The Block, Decrypt, Blockworks, Bitcoin Magazine)",
+        "symbol": raw or "ALL",
+        "article_count": len(articles),
+        "articles": articles,
+    }
+
+
 TOOL_DEFINITIONS = [
     {
         "type": "function",
@@ -465,6 +590,28 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_crypto_news",
+            "description": (
+                "Get latest crypto news headlines and summaries. "
+                "Optionally filter by coin symbol. Returns title, source, "
+                "and article URLs. Source: RSS feeds from CoinDesk, "
+                "CoinTelegraph, The Block, Decrypt, Blockworks, Bitcoin Magazine."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Crypto symbol to filter news, e.g. BTC, ETH, SOL. Leave empty for all crypto news.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 # ── Tool dispatch ─────────────────────────────────────────────────────────────────
@@ -477,4 +624,5 @@ TOOL_DISPATCH = {
     "get_technical_analysis": get_technical_analysis,
     "get_prediction_markets": get_prediction_markets,
     "get_prediction_accuracy": get_prediction_accuracy,
+    "get_crypto_news": get_crypto_news,
 }

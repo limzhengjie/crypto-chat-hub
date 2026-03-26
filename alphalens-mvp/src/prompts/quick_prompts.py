@@ -7,6 +7,7 @@ Each entry is (button_label, emoji, prompt_template).
 Design principle: "users don't know what they don't know."
 Each button answers a question a retail trader should be asking but often isn't.
 """
+
 from __future__ import annotations
 
 QUICK_PROMPTS: list[tuple[str, str, str]] = [
@@ -16,10 +17,11 @@ QUICK_PROMPTS: list[tuple[str, str, str]] = [
         (
             "Generate a comprehensive investment research report for {symbol}. "
             "Call ALL available tools: get_market_data, get_tvl (if applicable), "
-            "get_funding_rate, get_open_interest, get_technical_analysis, and "
-            "get_prediction_markets. "
+            "get_funding_rate, get_open_interest, get_technical_analysis, "
+            "get_prediction_markets, and get_crypto_news. "
             "Structure the report with: Executive Summary, Market Context, "
             "Technical Analysis, Derivatives Sentiment, Prediction Market Signals, "
+            "Latest News & Narratives, "
             "Investment Thesis (bull vs bear), Risk Assessment, and a plain-English Verdict. "
             "Cite [Source] after every number."
         ),
@@ -89,6 +91,20 @@ QUICK_PROMPTS: list[tuple[str, str, str]] = [
             "If yes or wait, give me a specific entry price, price target, "
             "stop-loss, and position size suggestion (as % of portfolio). "
             "Be honest about uncertainty."
+        ),
+    ),
+    (
+        "News Briefing",
+        "📰",
+        (
+            "What are the latest news and narratives around {symbol}? "
+            "Use get_crypto_news to get the latest headlines. "
+            "Also use get_market_data for price context. "
+            "Summarize: 1) The top 3-5 most important stories and what they mean, "
+            "2) Is the overall news sentiment bullish, bearish, or mixed? "
+            "3) Are there any catalysts or events coming up? "
+            "4) How does the news narrative align with the current price action? "
+            "Cite the source outlet for each story."
         ),
     ),
 ]
