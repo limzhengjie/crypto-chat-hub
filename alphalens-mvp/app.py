@@ -51,6 +51,7 @@ TOOL_LABELS = {
     "get_technical_analysis": "🔬 Running technical analysis on Binance data",
     "get_prediction_markets": "🎯 Fetching prediction markets from Polymarket",
     "get_prediction_accuracy": "📊 Checking Polymarket accuracy data",
+    "get_crypto_news": "📰 Fetching latest news from RSS feeds",
 }
 
 DEEP_DIVE_TOKENS = [
@@ -195,12 +196,24 @@ def _report_to_pdf_bytes(report_text: str, symbol: str) -> bytes:
                 self.set_xy(M, 36)
                 self.set_text_color(170, 170, 170)
                 self.set_font("Helvetica", size=8)
-                self.cell(w=0, h=5, text=_safe(f"Generated {now_str}  |  Binance  CoinGecko  DefiLlama  Polymarket"))
+                self.cell(
+                    w=0,
+                    h=5,
+                    text=_safe(
+                        f"Generated {now_str}  |  Binance  CoinGecko  DefiLlama  Polymarket"
+                    ),
+                )
                 self.set_y(52)
                 self.set_font("Helvetica", style="I", size=7)
                 self.set_text_color(*GRAY)
                 self.set_x(M)
-                self.multi_cell(w=210 - 2 * M, h=4, text=_safe("For research purposes only. Not financial advice. AI-generated content."))
+                self.multi_cell(
+                    w=210 - 2 * M,
+                    h=4,
+                    text=_safe(
+                        "For research purposes only. Not financial advice. AI-generated content."
+                    ),
+                )
                 self.ln(4)
             else:
                 self.set_y(15)
@@ -880,12 +893,13 @@ _grid_color = "#e5e7eb" if _is_light_theme else "#2a2a2a"
 # TABS (main area — horizontal bar unchanged)
 # ════════════════════════════════════════════════════════════════════════════════
 
-tab_dashboard, tab_research, tab_signal_scanner, tab_prediction = st.tabs(
+tab_dashboard, tab_research, tab_signal_scanner, tab_prediction, tab_news = st.tabs(
     [
         "📊 Dashboard",
         "💬 Chatbot",
         "🔍 Signal Scanner",
         "🎯 Prediction Markets",
+        "📰 News Feed",
     ],
     on_change="rerun",
     key="alphalens_tabs",
@@ -899,6 +913,8 @@ elif tab_signal_scanner.open:
     st.session_state["active_tab"] = "Signal Scanner"
 elif tab_prediction.open:
     st.session_state["active_tab"] = "Prediction Markets"
+elif tab_news.open:
+    st.session_state["active_tab"] = "News Feed"
 else:
     st.session_state["active_tab"] = st.session_state.get("active_tab", "Dashboard")
 
@@ -915,9 +931,7 @@ with st.sidebar:
             key="dash_assets",
         )
         _di = st.session_state.get("dash_interval", "1m")
-        _di_ix = (
-            _DASH_INTERVAL_OPTS.index(_di) if _di in _DASH_INTERVAL_OPTS else 0
-        )
+        _di_ix = _DASH_INTERVAL_OPTS.index(_di) if _di in _DASH_INTERVAL_OPTS else 0
         st.selectbox(
             "Candle interval",
             _DASH_INTERVAL_OPTS,
@@ -1001,9 +1015,7 @@ with st.sidebar:
             "missing history backfills once per symbol."
         )
         _siv = st.session_state.get("scanner_interval", "5m")
-        _siv_ix = (
-            _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
-        )
+        _siv_ix = _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
         st.selectbox(
             "Scanner timeframe",
             _DASH_INTERVAL_OPTS,
@@ -1039,9 +1051,7 @@ with st.sidebar:
             key="scanner_coin_filter",
         )
         _tf = st.session_state.get("scanner_time_filter", "All")
-        _tf_ix = (
-            SCANNER_TIME_OPTIONS.index(_tf) if _tf in SCANNER_TIME_OPTIONS else 0
-        )
+        _tf_ix = SCANNER_TIME_OPTIONS.index(_tf) if _tf in SCANNER_TIME_OPTIONS else 0
         st.selectbox(
             "Time period",
             SCANNER_TIME_OPTIONS,
@@ -1138,9 +1148,12 @@ with tab_dashboard:
                 _k = get_klines(_s, interval=interval, limit=lookback)
                 if _k:
                     _d = pd.DataFrame(
-                        _k, columns=["open_time", "open", "high", "low", "close", "volume"]
+                        _k,
+                        columns=["open_time", "open", "high", "low", "close", "volume"],
                     )
-                    _d["datetime"] = pd.to_datetime(_d["open_time"], unit="ms", utc=True)
+                    _d["datetime"] = pd.to_datetime(
+                        _d["open_time"], unit="ms", utc=True
+                    )
                     _d = add_indicators(_d)
                     dfs[_s] = _d
 
@@ -1309,7 +1322,9 @@ with tab_dashboard:
                         font=dict(size=13, color="#aaaaaa"),
                     ),
                     xaxis=dict(showgrid=True, gridcolor=_grid_color),
-                    yaxis=dict(title="Price (USDT)", showgrid=True, gridcolor=_grid_color),
+                    yaxis=dict(
+                        title="Price (USDT)", showgrid=True, gridcolor=_grid_color
+                    ),
                     yaxis2=dict(
                         title="Volume", overlaying="y", side="right", showgrid=False
                     ),
@@ -1552,10 +1567,16 @@ with tab_dashboard:
                 book = ob_stream.book
                 bids, asks = book.snapshot()
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Best Bid", f"${book.best_bid:,.2f}" if book.best_bid else "—")
-                m2.metric("Best Ask", f"${book.best_ask:,.2f}" if book.best_ask else "—")
+                m1.metric(
+                    "Best Bid", f"${book.best_bid:,.2f}" if book.best_bid else "—"
+                )
+                m2.metric(
+                    "Best Ask", f"${book.best_ask:,.2f}" if book.best_ask else "—"
+                )
                 m3.metric("Spread", f"${book.spread:,.2f}" if book.spread else "—")
-                m4.metric("Spread %", f"{book.spread_pct:.4f}%" if book.spread_pct else "—")
+                m4.metric(
+                    "Spread %", f"{book.spread_pct:.4f}%" if book.spread_pct else "—"
+                )
 
                 top_n = 10
                 bid_df = pd.DataFrame(bids[:top_n], columns=["Price", "Qty"])
@@ -1582,7 +1603,11 @@ with tab_dashboard:
                     st.markdown("**Bids 🟢** — buyers")
                     st.dataframe(
                         bid_df.style.format(
-                            {"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"}
+                            {
+                                "Price": "{:.4f}",
+                                "Qty": "{:.5f}",
+                                "Total (USDT)": "{:,.2f}",
+                            }
                         ).apply(_green_shade, subset=["Total (USDT)"]),
                         width="stretch",
                         hide_index=True,
@@ -1591,7 +1616,11 @@ with tab_dashboard:
                     st.markdown("**Asks 🔴** — sellers")
                     st.dataframe(
                         ask_df.style.format(
-                            {"Price": "{:.4f}", "Qty": "{:.5f}", "Total (USDT)": "{:,.2f}"}
+                            {
+                                "Price": "{:.4f}",
+                                "Qty": "{:.5f}",
+                                "Total (USDT)": "{:,.2f}",
+                            }
                         ).apply(_red_shade, subset=["Total (USDT)"]),
                         width="stretch",
                         hide_index=True,
@@ -1639,7 +1668,9 @@ with tab_dashboard:
                             title="Price (USDT)", showgrid=True, gridcolor=_grid_color
                         ),
                         yaxis=dict(
-                            title="Cumulative Volume", showgrid=True, gridcolor=_grid_color
+                            title="Cumulative Volume",
+                            showgrid=True,
+                            gridcolor=_grid_color,
                         ),
                         plot_bgcolor="rgba(0,0,0,0)",
                         paper_bgcolor="rgba(0,0,0,0)",
@@ -1865,9 +1896,7 @@ with tab_signal_scanner:
                         if bf_key:
                             new_backfill_keys.add(bf_key)
                         completed += 1
-                        progress.progress(
-                            min(1.0, completed / n_sym) if n_sym else 1.0
-                        )
+                        progress.progress(min(1.0, completed / n_sym) if n_sym else 1.0)
 
                 if new_backfill_keys:
                     st.session_state.setdefault("loaded_history", set()).update(
@@ -1887,9 +1916,7 @@ with tab_signal_scanner:
                     prev = df.iloc[-2]
                     close_f = float(last["close"])
                     prev_c = float(prev["close"])
-                    chg_pct = (
-                        ((close_f - prev_c) / prev_c) * 100 if prev_c else 0.0
-                    )
+                    chg_pct = ((close_f - prev_c) / prev_c) * 100 if prev_c else 0.0
 
                     rsi = last.get("rsi")
                     macd = last.get("macd")
@@ -1956,20 +1983,12 @@ with tab_signal_scanner:
             g_txt = t["green"]
             r_txt = t["red"]
             g_cell = (
-                "rgba(22,163,74,0.12)"
-                if _is_light_theme
-                else "rgba(34,197,94,0.15)"
+                "rgba(22,163,74,0.12)" if _is_light_theme else "rgba(34,197,94,0.15)"
             )
             r_cell = (
-                "rgba(220,38,38,0.12)"
-                if _is_light_theme
-                else "rgba(239,68,68,0.15)"
+                "rgba(220,38,38,0.12)" if _is_light_theme else "rgba(239,68,68,0.15)"
             )
-            n_cell = (
-                "rgba(0,0,0,0.04)"
-                if _is_light_theme
-                else "rgba(255,255,255,0.05)"
-            )
+            n_cell = "rgba(0,0,0,0.04)" if _is_light_theme else "rgba(255,255,255,0.05)"
             n_txt = "#6b7280" if _is_light_theme else "#9ca3af"
             desc_clr = "#6b7280" if _is_light_theme else "#9ca3af"
 
@@ -2010,19 +2029,25 @@ with tab_signal_scanner:
                     or pd.isna(s50)
                     or float(s50) == 0
                 ):
-                    return f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                    return (
+                        f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                    )
                 a20, a50 = float(s20), float(s50)
                 if abs(a20 - a50) / abs(a50) < 0.001:
-                    return f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                    return (
+                        f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                    )
                 if a20 > a50:
-                    return f'<span style="color:{g_txt};font-weight:600;">↑ Bullish</span>'
+                    return (
+                        f'<span style="color:{g_txt};font-weight:600;">↑ Bullish</span>'
+                    )
                 return f'<span style="color:{r_txt};font-weight:600;">↓ Bearish</span>'
 
             th = (
-                f'<thead><tr>'
-                f'<th>Asset</th><th>Price</th><th>RSI (14)</th><th>MACD</th>'
-                f'<th>BB Position</th><th>Trend</th><th>Overall Signal</th>'
-                f"</tr></thead>"
+                "<thead><tr>"
+                "<th>Asset</th><th>Price</th><th>RSI (14)</th><th>MACD</th>"
+                "<th>BB Position</th><th>Trend</th><th>Overall Signal</th>"
+                "</tr></thead>"
             )
             tb_parts: list[str] = []
             for rw in rows:
@@ -2050,7 +2075,9 @@ with tab_signal_scanner:
                 bbp = rw["bb_pct"]
                 bg_b, fg_b, lb_b = _bb_style(bbp)
 
-                rsi_disp = f"{float(rsi):.1f}" if rsi is not None and not pd.isna(rsi) else "—"
+                rsi_disp = (
+                    f"{float(rsi):.1f}" if rsi is not None and not pd.isna(rsi) else "—"
+                )
                 macd_disp = (
                     f"{float(macd):.4f}"
                     if macd is not None and not pd.isna(macd)
@@ -2097,9 +2124,7 @@ with tab_signal_scanner:
 
             done_rows = [r for r in rows if not r.get("loading")]
             n_bull = sum(
-                1
-                for r in done_rows
-                if r.get("overall") in ("🟢 Strong Buy", "🟡 Buy")
+                1 for r in done_rows if r.get("overall") in ("🟢 Strong Buy", "🟡 Buy")
             )
             n_bear = sum(
                 1
@@ -2307,9 +2332,9 @@ with tab_prediction:
                 st.session_state["mkt_history"][key].append(
                     (now.timestamp(), mkt["market_odds"])
                 )
-                st.session_state["mkt_history"][key] = st.session_state["mkt_history"][key][
-                    -120:
-                ]
+                st.session_state["mkt_history"][key] = st.session_state["mkt_history"][
+                    key
+                ][-120:]
 
             # ── Filter by coin ────────────────────────────────────────────────
             selected_coins = coin_filter if coin_filter else ["All"]
@@ -2331,8 +2356,12 @@ with tab_prediction:
                 if time_filter == "Long-term":
                     visible = [m for m in visible if m["hours_left"] > 744]
                 else:
-                    prev_max = {"Today": 0, "This Week": 24, "This Month": 168}[time_filter]
-                    visible = [m for m in visible if prev_max < m["hours_left"] <= max_h]
+                    prev_max = {"Today": 0, "This Week": 24, "This Month": 168}[
+                        time_filter
+                    ]
+                    visible = [
+                        m for m in visible if prev_max < m["hours_left"] <= max_h
+                    ]
 
             # ── Sort by volume (highest first) ────────────────────────────────
             visible.sort(key=lambda o: o.get("volume", 0), reverse=True)
@@ -2424,9 +2453,7 @@ with tab_prediction:
                         _badge = _CONSENSUS_BADGE_BG.get(_tick, "#64748b")
                         _bar_c = _consensus_prob_bar_color(_pct)
                         _fill = min(100.0, max(0.0, _pct))
-                        _line = (
-                            f"{_pct:.0f}% chance {_dir} ${_thr:,.0f} {_by}"
-                        )
+                        _line = f"{_pct:.0f}% chance {_dir} ${_thr:,.0f} {_by}"
                         _html_parts.append(
                             '<div class="alphalens-consensus-row">'
                             f'<span style="display:inline-flex;align-items:center;justify-content:center;'
@@ -2469,7 +2496,9 @@ with tab_prediction:
                     _render_event_group(group)
 
             # ── Sparkline cards (skip markets already in histograms) ──────────
-            card_mkts = [m for m in visible if m.get("event_id", "") not in histogram_ids]
+            card_mkts = [
+                m for m in visible if m.get("event_id", "") not in histogram_ids
+            ]
             for row_start in range(0, len(card_mkts), 2):
                 cols = st.columns(2)
                 for col_idx, mkt in enumerate(card_mkts[row_start : row_start + 2]):
@@ -2536,7 +2565,8 @@ with tab_prediction:
                         tickfont=dict(size=11),
                     ),
                     yaxis=dict(
-                        visible=False, range=[0, max(probs) * 1.25] if probs else [0, 100]
+                        visible=False,
+                        range=[0, max(probs) * 1.25] if probs else [0, 100],
                     ),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
@@ -2609,7 +2639,9 @@ with tab_prediction:
                 if len(history) >= 2:
                     from datetime import datetime, timezone
 
-                    times = [datetime.fromtimestamp(t, tz=timezone.utc) for t, _ in history]
+                    times = [
+                        datetime.fromtimestamp(t, tz=timezone.utc) for t, _ in history
+                    ]
                     prices = [p for _, p in history]
                     first_p, last_p = prices[0], prices[-1]
                     line_color = "#00e676" if last_p >= first_p else "#ff1744"
@@ -2637,7 +2669,10 @@ with tab_prediction:
                             y=prices,
                             mode="lines",
                             line=dict(
-                                color=line_color, width=2.5, shape="spline", smoothing=1.0
+                                color=line_color,
+                                width=2.5,
+                                shape="spline",
+                                smoothing=1.0,
                             ),
                             showlegend=False,
                             hovertemplate="%{y:.1f}%<extra></extra>",
@@ -2703,3 +2738,212 @@ with tab_prediction:
                 )
 
         _live_markets()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# TAB — NEWS FEED
+# ════════════════════════════════════════════════════════════════════════════════
+
+NEWS_COIN_OPTIONS = [
+    "All",
+    "BTC",
+    "ETH",
+    "SOL",
+    "BNB",
+    "XRP",
+    "DOGE",
+    "ADA",
+    "AVAX",
+    "LINK",
+    "DOT",
+    "UNI",
+    "NEAR",
+    "ARB",
+    "SUI",
+    "APT",
+    "PEPE",
+    "TON",
+]
+
+with tab_news:
+    if tab_news.open:
+        st.session_state["active_tab"] = "News Feed"
+        st.markdown("### 📰 Crypto News Feed")
+        st.caption(
+            "Auto-refreshing every 60s · CoinDesk, CoinTelegraph, The Block, Decrypt, Blockworks, Bitcoin Magazine"
+        )
+
+        t = _active_theme
+        _news_accent = t["accent"]
+
+        if "news_archive" not in st.session_state:
+            st.session_state["news_archive"] = {}
+
+        _nf_col1, _nf_col2, _ = st.columns([1, 1, 2])
+        with _nf_col1:
+            news_coin_filter = st.selectbox(
+                "Filter by coin",
+                NEWS_COIN_OPTIONS,
+                index=0,
+                key="news_coin_filter",
+            )
+        with _nf_col2:
+            news_time_filter = st.selectbox(
+                "Time range",
+                ["Latest", "Today", "Past 24h", "Past 3 Days", "Past 5 Days"],
+                index=0,
+                key="news_time_filter",
+            )
+
+        @st.fragment(run_every=60 if auto_refresh else None)
+        def _news_feed():
+            from src.tools import get_crypto_news
+
+            # Always fetch all to build archive, filter for display
+            with st.status("Fetching news...", expanded=False) as status:
+                result = get_crypto_news("")
+                status.update(label="News loaded", state="complete", expanded=False)
+
+            if result.get("error"):
+                st.error(f"Failed to fetch news: {result['error']}")
+                return
+
+            # Merge into session archive (keyed by url, pruned to 5 days)
+            now = time.time()
+            five_days_ago = now - (5 * 86400)
+            archive = st.session_state["news_archive"]
+            for a in result.get("articles", []):
+                if a["url"] and a["published_on"] > five_days_ago:
+                    archive[a["url"]] = a
+            st.session_state["news_archive"] = {
+                u: a for u, a in archive.items() if a["published_on"] > five_days_ago
+            }
+
+            # Build display list from archive
+            all_articles = sorted(
+                st.session_state["news_archive"].values(),
+                key=lambda a: a["published_on"],
+                reverse=True,
+            )
+
+            # Time filter
+            time_cutoffs = {
+                "Latest": 0,
+                "Today": now - 86400,
+                "Past 24h": now - 86400,
+                "Past 3 Days": now - (3 * 86400),
+                "Past 5 Days": now - (5 * 86400),
+            }
+            cutoff = time_cutoffs.get(news_time_filter, 0)
+            if cutoff > 0:
+                all_articles = [a for a in all_articles if a["published_on"] >= cutoff]
+
+            # Coin filter
+            if news_coin_filter != "All":
+                kw = news_coin_filter.lower()
+                aliases = {
+                    "BTC": ["bitcoin", "btc"],
+                    "ETH": ["ethereum", "eth", "ether"],
+                    "SOL": ["solana", "sol"],
+                    "BNB": ["bnb", "binance coin", "binance"],
+                    "XRP": ["xrp", "ripple"],
+                    "DOGE": ["doge", "dogecoin"],
+                    "ADA": ["ada", "cardano"],
+                    "AVAX": ["avax", "avalanche"],
+                    "DOT": ["dot", "polkadot"],
+                    "LINK": ["link", "chainlink"],
+                    "UNI": ["uni", "uniswap"],
+                    "NEAR": ["near protocol", "near"],
+                    "ARB": ["arb", "arbitrum"],
+                    "SUI": ["sui"],
+                    "APT": ["apt", "aptos"],
+                    "PEPE": ["pepe"],
+                    "TON": ["ton", "toncoin"],
+                }
+                terms = aliases.get(news_coin_filter.upper(), [kw])
+                all_articles = [
+                    a
+                    for a in all_articles
+                    if any(
+                        tm in a["title"].lower() or tm in a["body"].lower()
+                        for tm in terms
+                    )
+                ]
+
+            if not all_articles:
+                st.info(
+                    f"No news found"
+                    f"{' for ' + news_coin_filter if news_coin_filter != 'All' else ''}"
+                    f"{' in ' + news_time_filter.lower() if news_time_filter != 'Latest' else ''}. "
+                    "Try 'All' coins or a wider time range."
+                )
+                return
+
+            # Status bar (same pattern as Prediction Markets tab)
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">'
+                f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+                f'background:#22c55e;animation:pulse 2s infinite;"></span>'
+                f'<span style="font-size:0.78rem;color:{t["label"]};font-weight:500;">'
+                f"{len(all_articles)} articles"
+                f" · {len(st.session_state['news_archive'])} in archive</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            for article in all_articles:
+                _title = html.escape(article["title"])
+                _source = html.escape(article["source_name"])
+                _url = article["url"]
+                _body = html.escape(article["body"])
+                _pub = article["published_on"]
+
+                # Time ago
+                if _pub <= 0:
+                    _tago = ""
+                else:
+                    diff = now - _pub
+                    if diff < 60:
+                        _tago = "just now"
+                    elif diff < 3600:
+                        _tago = f"{int(diff / 60)}m ago"
+                    elif diff < 86400:
+                        _tago = f"{int(diff / 3600)}h ago"
+                    else:
+                        d = int(diff / 86400)
+                        h = int((diff % 86400) / 3600)
+                        _tago = f"{d}d {h}h ago"
+
+                st.markdown(
+                    f'<div style="padding:16px 18px;margin-bottom:10px;'
+                    f"border-radius:{t['radius']};"
+                    f"border:1px solid {t['border']};"
+                    f'background:{t["card"]};">'
+                    # Header: source + time | watermark
+                    f'<div style="display:flex;justify-content:space-between;'
+                    f'align-items:center;margin-bottom:8px;">'
+                    f'<div style="display:flex;align-items:center;gap:10px;">'
+                    f'<span style="font-size:0.72rem;font-weight:600;color:{_news_accent};'
+                    f'letter-spacing:0.04em;text-transform:uppercase;">{_source}</span>'
+                    f'<span style="font-size:0.7rem;color:rgba(255,255,255,0.35);">{_tago}</span>'
+                    f"</div>"
+                    f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
+                    f'letter-spacing:0.03em;">RSS</span>'
+                    f"</div>"
+                    # Title (clickable)
+                    f'<a href="{_url}" target="_blank" style="text-decoration:none;">'
+                    f'<div style="font-size:0.92rem;font-weight:600;color:{t["text"]};'
+                    f'line-height:1.4;margin-bottom:6px;">{_title}</div></a>'
+                    # Body snippet
+                    f'<div style="font-size:0.78rem;color:rgba(255,255,255,0.5);'
+                    f'line-height:1.5;">{_body}{"..." if len(_body) >= 297 else ""}</div>'
+                    # Footer watermark (matches Prediction Markets pattern)
+                    f'<div style="display:flex;justify-content:flex-end;margin-top:6px;'
+                    f'padding-top:6px;border-top:1px solid rgba(255,255,255,0.06);">'
+                    f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
+                    f'letter-spacing:0.03em;">{_source}</span>'
+                    f"</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+        _news_feed()
