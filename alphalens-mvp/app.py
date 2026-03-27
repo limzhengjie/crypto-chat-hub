@@ -2578,17 +2578,29 @@ with tab_prediction:
 
             # ── Summary stats ─────────────────────────────────────────────────
             total_vol = sum(o.get("volume", 0) for o in visible)
-            coins_in_view = sorted(
-                {
-                    o["symbol"].replace("USDT", "")
-                    for o in visible
-                    if o["symbol"] != "CRYPTOUSDT"
-                }
-            )
+            _selected_specific = [c for c in selected_coins if c != "All"]
+            _visible_coin_set = {
+                o["symbol"].replace("USDT", "")
+                for o in visible
+                if o["symbol"] != "CRYPTOUSDT"
+            }
+            if _selected_specific:
+                coins_in_view = _selected_specific
+            else:
+                coins_in_view = sorted(_visible_coin_set)
             s1, s2, s3 = st.columns(3)
             s1.metric("Markets", len(visible))
             s2.metric("Total Volume", _fmt_vol(total_vol))
             s3.metric("Coins", " · ".join(coins_in_view) if coins_in_view else "—")
+
+            _missing_selected = [c for c in _selected_specific if c not in _visible_coin_set]
+            if _missing_selected:
+                st.info(
+                    f"No prediction market data for {', '.join(_missing_selected)}. "
+                    "Try a different coin."
+                )
+            if not visible:
+                return
 
             # ── Implied price range summary ────────────────────────────────────
             coin_targets: dict[str, list[dict]] = defaultdict(list)
