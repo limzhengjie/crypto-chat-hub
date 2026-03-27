@@ -1217,12 +1217,15 @@ _syms_to_fetch = [
 if _syms_to_fetch:
     with st.spinner(f"Loading historical candles for {', '.join(_syms_to_fetch)}…"):
         with ThreadPoolExecutor(max_workers=4) as _ex:
-            _ex.map(
-                lambda s: fetch_historical_klines(s, interval, limit=500),
-                _syms_to_fetch,
+            results = list(
+                _ex.map(
+                    lambda s: (s, fetch_historical_klines(s, interval, limit=500)),
+                    _syms_to_fetch,
+                )
             )
-    for sym in _syms_to_fetch:
-        st.session_state["history_loaded"].add(f"hist_{sym}_{interval}")
+    for sym, count in results:
+        if count > 0:
+            st.session_state["history_loaded"].add(f"hist_{sym}_{interval}")
 
 # ── Kline WebSocket streams ──────────────────────────────────────────────────────
 active_ks = {f"ks_{sym}_{interval}" for sym in symbols}
@@ -1292,6 +1295,9 @@ with tab_dashboard:
             dfs: dict[str, pd.DataFrame] = {}
             for _s in symbols:
                 _k = get_klines(_s, interval=interval, limit=lookback)
+                if not _k:
+                    fetch_historical_klines(_s, interval, limit=500)
+                    _k = get_klines(_s, interval=interval, limit=lookback)
                 if _k:
                     _d = pd.DataFrame(
                         _k,
@@ -1306,7 +1312,7 @@ with tab_dashboard:
             if len(symbols) == 1:
                 df = dfs.get(primary)
                 if df is None or df.empty:
-                    st.info("⏳ Waiting for candle data…")
+                    st.warning("Could not load candle data. Retrying on next refresh…")
                     return
 
                 latest = df.iloc[-1]

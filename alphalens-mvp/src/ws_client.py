@@ -10,7 +10,10 @@ import websocket
 
 from .database import upsert_kline
 
-BINANCE_WS_BASE = "wss://stream.binance.com:9443/ws"
+BINANCE_WS_URLS = [
+    "wss://stream.binance.com:9443/ws",
+    "wss://stream.binance.us:9443/ws",
+]
 
 
 def _ws_sslopt() -> dict:
@@ -50,6 +53,7 @@ class BinanceKlineStream:
         self._ws: Optional[websocket.WebSocketApp] = None
         self._thread: Optional[threading.Thread] = None
         self.is_running = False
+        self._stopped = False
 
     # ------------------------------------------------------------------ #
     # WebSocket callbacks                                                  #
@@ -84,9 +88,7 @@ class BinanceKlineStream:
     def _on_error(self, ws: websocket.WebSocketApp, error: Exception) -> None:
         print(f"[WS] Error: {error}")
 
-    def _on_close(
-        self, ws: websocket.WebSocketApp, code: int, msg: str
-    ) -> None:
+    def _on_close(self, ws: websocket.WebSocketApp, code: int, msg: str) -> None:
         self.is_running = False
         print(f"[WS] Closed  (code={code})")
 
@@ -94,27 +96,40 @@ class BinanceKlineStream:
     # Lifecycle                                                            #
     # ------------------------------------------------------------------ #
 
+    def _run_with_reconnect(self) -> None:
+        stream_path = f"{self.symbol.lower()}@kline_{self.interval}"
+        sslopt = _ws_sslopt()
+        while not self._stopped:
+            for base_url in BINANCE_WS_URLS:
+                if self._stopped:
+                    return
+                url = f"{base_url}/{stream_path}"
+                self._ws = websocket.WebSocketApp(
+                    url,
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                )
+                self._ws.run_forever(
+                    ping_interval=30,
+                    ping_timeout=10,
+                    sslopt=sslopt,
+                )
+                if self._stopped:
+                    return
+            time.sleep(3)
+
     def start(self) -> None:
-        url = f"{BINANCE_WS_BASE}/{self.symbol.lower()}@kline_{self.interval}"
-        self._ws = websocket.WebSocketApp(
-            url,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
+        self._stopped = False
         self._thread = threading.Thread(
-            target=self._ws.run_forever,
-            kwargs={
-                "ping_interval": 30,
-                "ping_timeout": 10,
-                "sslopt": _ws_sslopt(),
-            },
+            target=self._run_with_reconnect,
             daemon=True,
         )
         self._thread.start()
 
     def stop(self) -> None:
+        self._stopped = True
         if self._ws:
             self._ws.close()
         self.is_running = False
