@@ -2,11 +2,11 @@
 Backfill SQLite with historical klines from the Binance REST API.
 No API key required — public endpoint.
 """
+
 from __future__ import annotations
 
 import requests
 
-from .database import upsert_kline
 
 BINANCE_REST = "https://api.binance.com/api/v3"
 
@@ -43,18 +43,22 @@ def fetch_historical_klines(
         print(f"[history] {symbol}/{interval} fetch failed: {exc}")
         return 0
 
-    for k in data:
-        upsert_kline(
-            symbol=symbol.upper(),
-            interval=interval,
-            open_time=int(k[0]),
-            open=float(k[1]),
-            high=float(k[2]),
-            low=float(k[3]),
-            close=float(k[4]),
-            volume=float(k[5]),
-            is_closed=True,
+    sym = symbol.upper()
+    rows = [
+        (
+            sym,
+            interval,
+            int(k[0]),
+            float(k[1]),
+            float(k[2]),
+            float(k[3]),
+            float(k[4]),
+            float(k[5]),
+            1,
         )
+        for k in data
+    ]
+    upsert_klines_batch(rows)
 
     print(f"[history] {symbol}/{interval}: loaded {len(data)} candles")
     return len(data)

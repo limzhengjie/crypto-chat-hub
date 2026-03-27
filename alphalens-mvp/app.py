@@ -294,7 +294,7 @@ st.set_page_config(
     page_title="AlphaLens — Crypto Research Agent",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 # ── Theme definitions ─────────────────────────────────────────────────────────────
@@ -682,6 +682,121 @@ def _inject_theme(t: dict) -> None:
             gap: 10px;
             margin: 1rem 0 1.25rem;
         }}
+
+        /* ── Mobile responsive ──────────────────────────────────────── */
+
+        /* Tabs: horizontal scroll on small screens */
+        @media (max-width: 768px) {{
+            .stTabs [data-baseweb="tab-list"] {{
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                flex-wrap: nowrap;
+            }}
+            .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {{ display: none; }}
+            .stTabs [data-baseweb="tab"] {{
+                padding: 8px 12px;
+                font-size: 0.75rem;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }}
+
+            /* Stack all Streamlit column layouts vertically */
+            [data-testid="stHorizontalBlock"] {{
+                flex-direction: column !important;
+                gap: 8px !important;
+            }}
+            [data-testid="stColumn"] {{
+                width: 100% !important;
+                flex: 1 1 100% !important;
+                min-width: 0 !important;
+            }}
+
+            /* Metric cards: compact on mobile */
+            [data-testid="stMetric"] {{
+                padding: 10px 14px 8px;
+                min-height: 80px;
+            }}
+            [data-testid="stMetricValue"] {{
+                font-size: 1.15rem !important;
+            }}
+            [data-testid="stMetricLabel"] {{
+                font-size: 0.65rem !important;
+            }}
+
+            /* Chat messages: tighter padding */
+            [data-testid="stChatMessage"] {{
+                padding: 12px 14px;
+            }}
+
+            /* Scanner table: horizontal scroll + smaller cells */
+            .alphalens-scanner-wrap {{
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }}
+            .alphalens-scanner-table {{
+                min-width: 580px;
+                font-size: 12px;
+            }}
+            .alphalens-scanner-table thead th {{
+                padding: 8px 10px;
+                font-size: 10px;
+            }}
+            .alphalens-scanner-row td {{
+                padding: 8px 10px;
+            }}
+
+            /* Consensus card: stack probability bar below text */
+            .alphalens-consensus-row {{
+                flex-wrap: wrap;
+                gap: 8px;
+                padding: 10px 12px;
+            }}
+            .alphalens-consensus-row > div:last-child {{
+                width: 100% !important;
+                max-width: 100% !important;
+            }}
+
+            /* Status bar: wrap on narrow screens */
+            .status-bar {{
+                flex-wrap: wrap;
+                font-size: 0.68rem;
+                padding: 4px 10px;
+            }}
+
+            /* Main content area: reduce side padding */
+            .stMainBlockContainer {{
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }}
+
+            /* Plotly charts: reduce margin */
+            .js-plotly-plot {{
+                margin-left: -8px;
+                margin-right: -8px;
+            }}
+        }}
+
+        /* Small phones */
+        @media (max-width: 480px) {{
+            [data-testid="stMetric"] {{
+                padding: 8px 10px 6px;
+                min-height: 70px;
+            }}
+            [data-testid="stMetricValue"] {{
+                font-size: 1rem !important;
+            }}
+            .stTabs [data-baseweb="tab"] {{
+                padding: 6px 10px;
+                font-size: 0.7rem;
+            }}
+            [data-testid="stChatMessage"] {{
+                padding: 10px 12px;
+            }}
+            .alphalens-consensus-row {{
+                padding: 8px 10px;
+            }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -697,6 +812,7 @@ def setup_db():
 setup_db()
 
 # ── Session state defaults ───────────────────────────────────────────────────────
+# Only pre-init keys that are NOT owned by a widget (widgets set their own defaults).
 if "history_loaded" not in st.session_state:
     st.session_state["history_loaded"] = set()
 if "chat_messages" not in st.session_state:
@@ -707,26 +823,8 @@ if "active_conv_id" not in st.session_state:
     st.session_state["active_conv_id"] = None
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "Dashboard"
-if "dash_assets" not in st.session_state:
-    st.session_state["dash_assets"] = ["BTCUSDT"]
-if "dash_interval" not in st.session_state:
-    st.session_state["dash_interval"] = "1m"
-if "dash_lookback" not in st.session_state:
-    st.session_state["dash_lookback"] = 100
-if "auto_refresh" not in st.session_state:
-    st.session_state["auto_refresh"] = True
-if "scanner_coin_filter" not in st.session_state:
-    st.session_state["scanner_coin_filter"] = ["All"]
-if "scanner_time_filter" not in st.session_state:
-    st.session_state["scanner_time_filter"] = "All"
-if "scanner_interval" not in st.session_state:
-    st.session_state["scanner_interval"] = "5m"
-if "scanner_auto_refresh" not in st.session_state:
-    st.session_state["scanner_auto_refresh"] = True
 if "loaded_history" not in st.session_state:
     st.session_state["loaded_history"] = set()
-if "quick_research_coin" not in st.session_state:
-    st.session_state["quick_research_coin"] = "BTC"
 
 SCANNER_DATA_LIMIT = 60
 SCANNER_CACHE_TTL = 30
@@ -1102,13 +1200,21 @@ auto_refresh = bool(st.session_state.get("auto_refresh", True))
 
 primary = symbols[0]
 
-# ── Historical data: fetch once per (symbol, interval) ──────────────────────────
-for sym in symbols:
-    hist_key = f"hist_{sym}_{interval}"
-    if hist_key not in st.session_state["history_loaded"]:
-        with st.spinner(f"Loading historical candles for {sym}…"):
-            fetch_historical_klines(sym, interval, limit=500)
-        st.session_state["history_loaded"].add(hist_key)
+# ── Historical data: fetch once per (symbol, interval), parallel ──────────────
+_syms_to_fetch = [
+    sym
+    for sym in symbols
+    if f"hist_{sym}_{interval}" not in st.session_state["history_loaded"]
+]
+if _syms_to_fetch:
+    with st.spinner(f"Loading historical candles for {', '.join(_syms_to_fetch)}…"):
+        with ThreadPoolExecutor(max_workers=4) as _ex:
+            _ex.map(
+                lambda s: fetch_historical_klines(s, interval, limit=500),
+                _syms_to_fetch,
+            )
+    for sym in _syms_to_fetch:
+        st.session_state["history_loaded"].add(f"hist_{sym}_{interval}")
 
 # ── Kline WebSocket streams ──────────────────────────────────────────────────────
 active_ks = {f"ks_{sym}_{interval}" for sym in symbols}
@@ -1767,7 +1873,9 @@ with tab_research:
                             with _hist_dl2:
                                 st.download_button(
                                     "⬇️ Download Word",
-                                    data=_report_to_docx_bytes(msg["content"], _msg_sym),
+                                    data=_report_to_docx_bytes(
+                                        msg["content"], _msg_sym
+                                    ),
                                     file_name=f"alphalens-{_msg_sym.lower()}-{_mi}.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                     key=f"dl_hist_docx_{_mi}",
@@ -1808,7 +1916,11 @@ with tab_research:
                     )
                 else:
                     st.session_state["chat_messages"].append(
-                        {"role": "user", "content": prompt_to_run, "symbol": _prompt_sym}
+                        {
+                            "role": "user",
+                            "content": prompt_to_run,
+                            "symbol": _prompt_sym,
+                        }
                     )
                     with st.chat_message("user"):
                         st.markdown(prompt_to_run)
@@ -1881,7 +1993,11 @@ with tab_research:
                                 )
 
                     st.session_state["chat_messages"].append(
-                        {"role": "assistant", "content": response, "symbol": _prompt_sym}
+                        {
+                            "role": "assistant",
+                            "content": response,
+                            "symbol": _prompt_sym,
+                        }
                     )
                     _archive_current_chat()
 
