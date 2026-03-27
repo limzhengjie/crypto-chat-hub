@@ -140,15 +140,11 @@ def _report_to_docx_bytes(report_text: str, symbol: str) -> bytes:
             # Keep section spacing in the generated document.
             doc.add_paragraph("")
             continue
-        if line.startswith("### "):
-            p = doc.add_heading("", level=3)
-            _add_markdown_runs(p, line[4:].strip())
-        elif line.startswith("## "):
-            p = doc.add_heading("", level=2)
-            _add_markdown_runs(p, line[3:].strip())
-        elif line.startswith("# "):
-            p = doc.add_heading("", level=1)
-            _add_markdown_runs(p, line[2:].strip())
+        _heading_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if _heading_match:
+            level = min(6, len(_heading_match.group(1)))
+            p = doc.add_heading("", level=level)
+            _add_markdown_runs(p, _heading_match.group(2).strip())
         elif line.startswith(("- ", "* ")):
             p = doc.add_paragraph(style="List Bullet")
             _add_markdown_runs(p, line[2:].strip())
@@ -243,30 +239,42 @@ def _report_to_pdf_bytes(report_text: str, symbol: str) -> bytes:
             pdf.ln(2)
             continue
 
-        if line.startswith("### "):
-            pdf.ln(2)
-            pdf.set_font("Helvetica", style="B", size=10.5)
-            pdf.set_text_color(*DARK)
-            pdf.set_x(M)
-            pdf.multi_cell(w=cw, h=5.5, text=_safe(line[4:]))
-            pdf.ln(1)
-        elif line.startswith("## "):
-            pdf.ln(4)
-            pdf.set_draw_color(*ACCENT)
-            pdf.set_line_width(0.4)
-            pdf.line(M, pdf.get_y(), M + cw, pdf.get_y())
-            pdf.ln(2.5)
-            pdf.set_font("Helvetica", style="B", size=13)
-            pdf.set_text_color(*DARK)
-            pdf.set_x(M)
-            pdf.multi_cell(w=cw, h=6.5, text=_safe(line[3:]))
-            pdf.ln(1.5)
-        elif line.startswith("# "):
-            pdf.set_font("Helvetica", style="B", size=15)
-            pdf.set_text_color(*DARK)
-            pdf.set_x(M)
-            pdf.multi_cell(w=cw, h=7, text=_safe(line[2:]))
-            pdf.ln(2)
+        _heading_match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if _heading_match:
+            level = len(_heading_match.group(1))
+            heading_text = _safe(_heading_match.group(2).strip())
+            if level == 1:
+                pdf.ln(2)
+                pdf.set_font("Helvetica", style="B", size=15)
+                pdf.set_text_color(*DARK)
+                pdf.set_x(M)
+                pdf.multi_cell(w=cw, h=7, text=heading_text)
+                pdf.ln(2)
+            elif level == 2:
+                pdf.ln(4)
+                pdf.set_draw_color(*ACCENT)
+                pdf.set_line_width(0.4)
+                pdf.line(M, pdf.get_y(), M + cw, pdf.get_y())
+                pdf.ln(2.5)
+                pdf.set_font("Helvetica", style="B", size=13)
+                pdf.set_text_color(*DARK)
+                pdf.set_x(M)
+                pdf.multi_cell(w=cw, h=6.5, text=heading_text)
+                pdf.ln(1.5)
+            elif level == 3:
+                pdf.ln(2)
+                pdf.set_font("Helvetica", style="B", size=10.5)
+                pdf.set_text_color(*DARK)
+                pdf.set_x(M)
+                pdf.multi_cell(w=cw, h=5.5, text=heading_text)
+                pdf.ln(1)
+            else:
+                pdf.ln(1.5)
+                pdf.set_font("Helvetica", style="B", size=9.8)
+                pdf.set_text_color(*DARK)
+                pdf.set_x(M)
+                pdf.multi_cell(w=cw, h=5, text=heading_text)
+                pdf.ln(0.8)
         elif line.startswith(("- ", "* ")):
             pdf.set_font("Helvetica", size=9.5)
             pdf.set_text_color(*BODY)
@@ -408,8 +416,24 @@ SCANNER_COIN_BADGE_BG = {
     "DOGE": "#C3A634",
 }
 SCANNER_BADGE_DEFAULT = "#6b7280"
+CHATBOT_COIN_COLOR_DOT = {
+    "BTC": "🟠",
+    "ETH": "🔵",
+    "SOL": "🟣",
+    "XRP": "🔷",
+    "BNB": "🟡",
+    "DOGE": "🟨",
+    "ADA": "🔵",
+    "AVAX": "⚪",
+}
 
 _QUICK_RESEARCH_PLACEHOLDER = "Choose a quick prompt…"
+_CHATBOT_COIN_OPTIONS = [s.replace("USDT", "") for s in AVAILABLE_SYMBOLS]
+
+
+def _format_chatbot_coin_option(coin: str) -> str:
+    """Render coin option with a colored dot marker."""
+    return f"{CHATBOT_COIN_COLOR_DOT.get(coin, '⚪')} {coin}"
 
 
 def _consensus_prob_bar_color(prob: float) -> str:
@@ -560,10 +584,10 @@ def _inject_theme(t: dict) -> None:
 
         /* Buttons */
         .stButton > button[kind="primary"] {{
-            background: {t["accent"]}; color: {btn_text} !important;
+            background: {t["green"]}; color: #ffffff !important;
             border: none; border-radius: {r}; font-weight: 600;
         }}
-        .stButton > button[kind="primary"]:hover {{ background: {t["accent_hover"]}; }}
+        .stButton > button[kind="primary"]:hover {{ background: #16a34a; }}
 
         /* Status badge (dashboard live strip — keep clear of metrics below) */
         .status-bar {{
@@ -700,6 +724,8 @@ if "scanner_auto_refresh" not in st.session_state:
     st.session_state["scanner_auto_refresh"] = True
 if "loaded_history" not in st.session_state:
     st.session_state["loaded_history"] = set()
+if "quick_research_coin" not in st.session_state:
+    st.session_state["quick_research_coin"] = "BTC"
 
 SCANNER_DATA_LIMIT = 60
 SCANNER_CACHE_TTL = 30
@@ -854,20 +880,23 @@ def _archive_current_chat() -> None:
     st.session_state["active_conv_id"] = new_id
 
 
-def _on_quick_research_dropdown() -> None:
-    """Apply selected quick prompt to chat input; reset dropdown to placeholder."""
+def _run_selected_quick_research() -> None:
+    """Queue selected quick prompt with selected coin for chatbot execution."""
     from src.prompts.quick_prompts import QUICK_PROMPTS as _qp
 
     sel = st.session_state.get("quick_research_dropdown")
     if not sel or sel == _QUICK_RESEARCH_PLACEHOLDER:
         return
-    _pa = (st.session_state.get("dash_assets") or ["BTCUSDT"])[0]
-    _sym = str(_pa).replace("USDT", "")
+    _sym = str(st.session_state.get("quick_research_coin") or "").strip().upper()
+    if _sym not in _CHATBOT_COIN_OPTIONS:
+        _pa = (st.session_state.get("dash_assets") or ["BTCUSDT"])[0]
+        _sym = str(_pa).replace("USDT", "")
     for _l, _e, _tmpl in _qp:
         if f"{_e} {_l}" == sel:
             st.session_state["_chat_user_input"] = _tmpl.format(symbol=_sym)
             break
-    st.session_state["quick_research_dropdown"] = _QUICK_RESEARCH_PLACEHOLDER
+    # Reset after rerun, before selectbox is instantiated again.
+    st.session_state["_reset_quick_research_dropdown"] = True
 
 
 # ── Sidebar (branding + theme) ─────────────────────────────────────────────────
@@ -1713,13 +1742,24 @@ with tab_research:
                     with st.chat_message(msg["role"]):
                         st.markdown(msg["content"].replace("$", r"\$"))
                         if msg["role"] == "assistant" and len(msg["content"]) > 100:
-                            st.download_button(
-                                "⬇️ Download PDF",
-                                data=_report_to_pdf_bytes(msg["content"], sym),
-                                file_name=f"alphalens-{sym.lower()}-{_mi}.pdf",
-                                mime="application/pdf",
-                                key=f"dl_hist_{_mi}",
-                            )
+                            _msg_sym = str(msg.get("symbol") or sym)
+                            _hist_dl1, _hist_dl2 = st.columns(2)
+                            with _hist_dl1:
+                                st.download_button(
+                                    "⬇️ Download PDF",
+                                    data=_report_to_pdf_bytes(msg["content"], _msg_sym),
+                                    file_name=f"alphalens-{_msg_sym.lower()}-{_mi}.pdf",
+                                    mime="application/pdf",
+                                    key=f"dl_hist_pdf_{_mi}",
+                                )
+                            with _hist_dl2:
+                                st.download_button(
+                                    "⬇️ Download Word",
+                                    data=_report_to_docx_bytes(msg["content"], _msg_sym),
+                                    file_name=f"alphalens-{_msg_sym.lower()}-{_mi}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dl_hist_docx_{_mi}",
+                                )
 
             # Auto-scroll to bottom
             st.components.v1.html(
@@ -1744,13 +1784,19 @@ with tab_research:
             prompt_to_run = user_typed
 
             if prompt_to_run:
+                _prompt_sym = sym
+                _prompt_upper = prompt_to_run.upper()
+                for _coin in _CHATBOT_COIN_OPTIONS:
+                    if re.search(rf"\b{re.escape(_coin)}\b", _prompt_upper):
+                        _prompt_sym = _coin
+                        break
                 if not api_key:
                     st.error(
                         "No API key. Set `GEMINI_API_KEY` (free) or `gpt_api_key` in `.env`."
                     )
                 else:
                     st.session_state["chat_messages"].append(
-                        {"role": "user", "content": prompt_to_run}
+                        {"role": "user", "content": prompt_to_run, "symbol": _prompt_sym}
                     )
                     with st.chat_message("user"):
                         st.markdown(prompt_to_run)
@@ -1800,13 +1846,13 @@ with tab_research:
                         st.markdown(response.replace("$", r"\$"))
 
                         if response and len(response) > 100:
-                            _sym_safe = sym.lower()
+                            _sym_safe = _prompt_sym.lower()
                             _ts = pd.Timestamp.utcnow().strftime("%Y%m%d-%H%M%S")
                             _dl1, _dl2 = st.columns(2)
                             with _dl1:
                                 st.download_button(
                                     "⬇️ Download PDF",
-                                    data=_report_to_pdf_bytes(response, sym),
+                                    data=_report_to_pdf_bytes(response, _prompt_sym),
                                     file_name=f"alphalens-{_sym_safe}-{_ts}.pdf",
                                     mime="application/pdf",
                                     key=f"dl_pdf_{_ts}",
@@ -1815,7 +1861,7 @@ with tab_research:
                             with _dl2:
                                 st.download_button(
                                     "⬇️ Download Word",
-                                    data=_report_to_docx_bytes(response, sym),
+                                    data=_report_to_docx_bytes(response, _prompt_sym),
                                     file_name=f"alphalens-{_sym_safe}-{_ts}.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                     key=f"dl_docx_{_ts}",
@@ -1823,10 +1869,9 @@ with tab_research:
                                 )
 
                     st.session_state["chat_messages"].append(
-                        {"role": "assistant", "content": response}
+                        {"role": "assistant", "content": response, "symbol": _prompt_sym}
                     )
                     _archive_current_chat()
-                    st.rerun()
 
         _chatbot(primary.replace("USDT", ""))
 
@@ -1834,15 +1879,38 @@ with tab_research:
         from src.prompts.quick_prompts import QUICK_PROMPTS as _QP
 
         _sym = primary.replace("USDT", "")
+        if st.session_state.get("quick_research_coin") not in _CHATBOT_COIN_OPTIONS:
+            st.session_state["quick_research_coin"] = _sym
+        if st.session_state.pop("_reset_quick_research_dropdown", False):
+            st.session_state["quick_research_dropdown"] = _QUICK_RESEARCH_PLACEHOLDER
         _qr_options = [_QUICK_RESEARCH_PLACEHOLDER] + [
             f"{_e} {_l}" for _l, _e, _ in _QP
         ]
-        st.selectbox(
-            "Quick research",
-            _qr_options,
-            key="quick_research_dropdown",
-            on_change=_on_quick_research_dropdown,
-            help="Pick a preset to fill the chat with a structured question.",
+        _qr_col, _coin_col = st.columns(2)
+        with _qr_col:
+            st.selectbox(
+                "Quick research",
+                _qr_options,
+                key="quick_research_dropdown",
+                help="Pick a preset to fill the chat with a structured question.",
+            )
+        with _coin_col:
+            st.selectbox(
+                "Cryptocurrency",
+                _CHATBOT_COIN_OPTIONS,
+                key="quick_research_coin",
+                help="Pick which cryptocurrency quick research should be about.",
+            )
+        _quick_ready = (
+            st.session_state.get("quick_research_dropdown")
+            != _QUICK_RESEARCH_PLACEHOLDER
+        )
+        st.button(
+            "Generate quick research",
+            use_container_width=True,
+            on_click=_run_selected_quick_research,
+            disabled=not _quick_ready,
+            type="primary" if _quick_ready else "secondary",
         )
 
         _typed = st.chat_input(f"Ask about {_sym} or any crypto…")
