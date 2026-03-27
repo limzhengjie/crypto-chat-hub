@@ -650,12 +650,12 @@ def _inject_theme(t: dict) -> None:
         .alphalens-scanner-table {{
             width: 100%;
             border-collapse: collapse;
-            font-size: 13px;
+            font-size: 14px;
         }}
         .alphalens-scanner-table thead th {{
             text-align: left;
             padding: 12px 16px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             letter-spacing: 0.06em;
             text-transform: uppercase;
@@ -664,9 +664,25 @@ def _inject_theme(t: dict) -> None:
             background: {t["card"]};
         }}
         .alphalens-scanner-row td {{
-            padding: 12px 16px;
+            padding: 14px 18px;
             vertical-align: top;
             border-bottom: 1px solid {t["border_subtle"]};
+        }}
+        .alphalens-scanner-cell-main {{
+            font-weight: 600;
+            font-size: 0.9375rem;
+            line-height: 1.3;
+        }}
+        .alphalens-scanner-cell-sub {{
+            font-size: 0.8125rem;
+            font-weight: 500;
+            line-height: 1.45;
+            margin-top: 6px;
+            letter-spacing: 0.01em;
+        }}
+        .alphalens-scanner-trend {{
+            font-weight: 600;
+            font-size: 0.9375rem;
         }}
         .alphalens-scanner-row:nth-child(even) td {{
             background: {"rgba(0,0,0,0.02)" if is_light else "rgba(255,255,255,0.02)"};
@@ -678,9 +694,9 @@ def _inject_theme(t: dict) -> None:
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 10px;
+            padding: 5px 12px;
             border-radius: 9999px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 600;
             border: 1px solid {t["border"]};
         }}
@@ -744,14 +760,21 @@ def _inject_theme(t: dict) -> None:
             }}
             .alphalens-scanner-table {{
                 min-width: 580px;
-                font-size: 12px;
+                font-size: 13px;
             }}
             .alphalens-scanner-table thead th {{
-                padding: 8px 10px;
-                font-size: 10px;
+                padding: 10px 12px;
+                font-size: 11px;
             }}
             .alphalens-scanner-row td {{
-                padding: 8px 10px;
+                padding: 10px 12px;
+            }}
+            .alphalens-scanner-cell-main {{
+                font-size: 0.875rem;
+            }}
+            .alphalens-scanner-cell-sub {{
+                font-size: 0.75rem;
+                margin-top: 5px;
             }}
 
             /* Consensus card: stack probability bar below text */
@@ -2177,13 +2200,16 @@ with tab_signal_scanner:
 
             rows = list(cache.get("rows") or [])
             ts_str = cache.get("ts_str", "—")
-            st.caption(
-                f"Live indicator snapshot across all tracked assets · {iv} candles · "
-                f"Updated {ts_str}"
-            )
-            _leg_muted = "#6b7280" if _is_light_theme else "#9ca3af"
+            _hdr_muted = "#5b6470" if _is_light_theme else "#b8c4d0"
             st.markdown(
-                f'<p style="font-size:12px;color:{_leg_muted};margin:0 0 14px 0;">'
+                f'<p style="font-size:13px;line-height:1.45;color:{_hdr_muted};margin:0 0 6px 0;">'
+                f"Live indicator snapshot across all tracked assets · {html.escape(iv)} candles · "
+                f"Updated {html.escape(ts_str)}</p>",
+                unsafe_allow_html=True,
+            )
+            _leg_muted = _hdr_muted
+            st.markdown(
+                f'<p style="font-size:13px;line-height:1.45;color:{_leg_muted};margin:0 0 16px 0;">'
                 "<strong>Legend:</strong> Green = bullish signal · Red = bearish signal · "
                 "Gray = neutral</p>",
                 unsafe_allow_html=True,
@@ -2200,7 +2226,31 @@ with tab_signal_scanner:
             )
             n_cell = "rgba(0,0,0,0.04)" if _is_light_theme else "rgba(255,255,255,0.05)"
             n_txt = "#6b7280" if _is_light_theme else "#9ca3af"
-            desc_clr = "#6b7280" if _is_light_theme else "#9ca3af"
+            desc_clr = "#5b6470" if _is_light_theme else "#b8c4d0"
+
+            def _rsi_sub_color(rv):
+                if rv is None or pd.isna(rv):
+                    return desc_clr
+                v = float(rv)
+                if v < 30:
+                    return g_txt
+                if v > 70:
+                    return r_txt
+                return desc_clr
+
+            def _macd_sub_color(lb_m: str):
+                if lb_m == "bullish":
+                    return g_txt
+                if lb_m == "bearish":
+                    return r_txt
+                return desc_clr
+
+            def _bb_sub_color(lb_b: str):
+                if lb_b == "near bottom":
+                    return g_txt
+                if lb_b == "near top":
+                    return r_txt
+                return desc_clr
 
             def _rsi_style(rv):
                 if rv is None or pd.isna(rv):
@@ -2240,18 +2290,18 @@ with tab_signal_scanner:
                     or float(s50) == 0
                 ):
                     return (
-                        f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                        f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
                     )
                 a20, a50 = float(s20), float(s50)
                 if abs(a20 - a50) / abs(a50) < 0.001:
                     return (
-                        f'<span style="color:{n_txt};font-weight:600;">→ Neutral</span>'
+                        f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
                     )
                 if a20 > a50:
                     return (
-                        f'<span style="color:{g_txt};font-weight:600;">↑ Bullish</span>'
+                        f'<span class="alphalens-scanner-trend" style="color:{g_txt};">↑ Bullish</span>'
                     )
-                return f'<span style="color:{r_txt};font-weight:600;">↓ Bearish</span>'
+                return f'<span class="alphalens-scanner-trend" style="color:{r_txt};">↓ Bearish</span>'
 
             th = (
                 "<thead><tr>"
@@ -2268,9 +2318,9 @@ with tab_signal_scanner:
                     tb_parts.append(
                         "<tr class='alphalens-scanner-row'>"
                         f'<td><span style="display:inline-flex;align-items:center;justify-content:center;'
-                        f"min-width:38px;padding:3px 9px;border-radius:9999px;background:{badge};"
-                        f'color:#fff;font-weight:700;font-size:11px;">{html.escape(tick)}</span></td>'
-                        f'<td colspan="6" style="color:{desc_clr};font-size:12px;font-style:italic;">'
+                        f"min-width:40px;padding:4px 10px;border-radius:9999px;background:{badge};"
+                        f'color:#fff;font-weight:700;font-size:12px;">{html.escape(tick)}</span></td>'
+                        f'<td colspan="6" style="color:{desc_clr};font-size:13px;font-style:italic;">'
                         "loading…</td></tr>"
                     )
                     continue
@@ -2299,26 +2349,30 @@ with tab_signal_scanner:
                     else "—"
                 )
 
+                sub_rsi = _rsi_sub_color(rsi)
+                sub_m = _macd_sub_color(lb_m)
+                sub_b = _bb_sub_color(lb_b)
                 tb_parts.append(
                     "<tr class='alphalens-scanner-row'>"
                     f'<td><span style="display:inline-flex;align-items:center;justify-content:center;'
-                    f"min-width:38px;padding:3px 9px;border-radius:9999px;background:{badge};"
-                    f'color:#fff;font-weight:700;font-size:11px;">{html.escape(tick)}</span></td>'
-                    f"<td><div style='font-weight:600;color:{t['text']};'>"
+                    f"min-width:40px;padding:4px 10px;border-radius:9999px;background:{badge};"
+                        f'color:#fff;font-weight:700;font-size:12px;">{html.escape(tick)}</span></td>'
+                    f"<td><div class='alphalens-scanner-cell-main' style='color:{t['text']};'>"
                     f"${rw['close']:,.2f}</div>"
-                    f"<div style='font-size:10px;color:{chg_c};margin-top:2px;'>"
+                    f"<div class='alphalens-scanner-cell-sub' style='color:{chg_c};'>"
                     f"{chg:+.2f}%</div></td>"
                     f"<td style='background:{bg_rsi};color:{fg_rsi};'>"
-                    f"<div style='font-weight:600;'>{rsi_disp}</div>"
-                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_rsi}</div></td>"
+                    f"<div class='alphalens-scanner-cell-main'>{rsi_disp}</div>"
+                    f"<div class='alphalens-scanner-cell-sub' style='color:{sub_rsi};'>{lb_rsi}</div></td>"
                     f"<td style='background:{bg_m};color:{fg_m};'>"
-                    f"<div style='font-weight:600;'>{macd_disp}</div>"
-                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_m}</div></td>"
+                    f"<div class='alphalens-scanner-cell-main'>{macd_disp}</div>"
+                    f"<div class='alphalens-scanner-cell-sub' style='color:{sub_m};'>{lb_m}</div></td>"
                     f"<td style='background:{bg_b};color:{fg_b};'>"
-                    f"<div style='font-weight:600;'>{bb_disp}</div>"
-                    f"<div style='font-size:10px;color:{desc_clr};'>{lb_b}</div></td>"
+                    f"<div class='alphalens-scanner-cell-main'>{bb_disp}</div>"
+                    f"<div class='alphalens-scanner-cell-sub' style='color:{sub_b};'>{lb_b}</div></td>"
                     f"<td>{_trend_html(rw['sma20'], rw['sma50'])}</td>"
-                    f"<td style='font-weight:700;color:{t['text']};'>{rw['overall']}</td>"
+                    f"<td class='alphalens-scanner-cell-main' style='font-weight:700;color:{t['text']};'>"
+                    f"{rw['overall']}</td>"
                     "</tr>"
                 )
 
