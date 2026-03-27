@@ -5,6 +5,7 @@ Stream: <symbol>@depth20@1000ms
   → full snapshot of top 20 bid/ask levels, pushed every 1 second.
   → each message REPLACES the book (not a delta).
 """
+
 from __future__ import annotations
 
 import json
@@ -15,7 +16,10 @@ from typing import Optional
 
 import websocket
 
-BINANCE_WS_BASE = "wss://stream.binance.com:9443/ws"
+BINANCE_WS_URLS = [
+    "wss://stream.binance.com:9443/ws",
+    "wss://stream.binance.us:9443/ws",
+]
 
 
 def _ws_sslopt() -> dict:
@@ -41,8 +45,8 @@ class OrderBook:
     """Thread-safe snapshot of the top-N bid and ask levels."""
 
     def __init__(self) -> None:
-        self.bids: list[tuple[float, float]] = []   # [(price, qty)] highest first
-        self.asks: list[tuple[float, float]] = []   # [(price, qty)] lowest first
+        self.bids: list[tuple[float, float]] = []  # [(price, qty)] highest first
+        self.asks: list[tuple[float, float]] = []  # [(price, qty)] lowest first
         self.last_update_ms: int = 0
         self._lock = threading.Lock()
 
@@ -51,7 +55,7 @@ class OrderBook:
             self.bids = sorted(
                 [(float(b[0]), float(b[1])) for b in bids],
                 key=lambda x: x[0],
-                reverse=True,   # highest bid first
+                reverse=True,  # highest bid first
             )
             self.asks = sorted(
                 [(float(a[0]), float(a[1])) for a in asks],
@@ -114,6 +118,7 @@ class BinanceOrderBookStream:
         self._ws: Optional[websocket.WebSocketApp] = None
         self._thread: Optional[threading.Thread] = None
         self.is_running = False
+        self._stopped = False
 
     def _on_open(self, ws) -> None:
         self.is_running = True
@@ -137,27 +142,40 @@ class BinanceOrderBookStream:
         self.is_running = False
         print(f"[OB]  Closed (code={code})")
 
+    def _run_with_reconnect(self) -> None:
+        stream_path = f"{self.symbol.lower()}@depth{self.depth}@1000ms"
+        sslopt = _ws_sslopt()
+        while not self._stopped:
+            for base_url in BINANCE_WS_URLS:
+                if self._stopped:
+                    return
+                url = f"{base_url}/{stream_path}"
+                self._ws = websocket.WebSocketApp(
+                    url,
+                    on_open=self._on_open,
+                    on_message=self._on_message,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                )
+                self._ws.run_forever(
+                    ping_interval=30,
+                    ping_timeout=10,
+                    sslopt=sslopt,
+                )
+                if self._stopped:
+                    return
+            time.sleep(3)
+
     def start(self) -> None:
-        url = f"{BINANCE_WS_BASE}/{self.symbol.lower()}@depth{self.depth}@1000ms"
-        self._ws = websocket.WebSocketApp(
-            url,
-            on_open=self._on_open,
-            on_message=self._on_message,
-            on_error=self._on_error,
-            on_close=self._on_close,
-        )
+        self._stopped = False
         self._thread = threading.Thread(
-            target=self._ws.run_forever,
-            kwargs={
-                "ping_interval": 30,
-                "ping_timeout": 10,
-                "sslopt": _ws_sslopt(),
-            },
+            target=self._run_with_reconnect,
             daemon=True,
         )
         self._thread.start()
 
     def stop(self) -> None:
+        self._stopped = True
         if self._ws:
             self._ws.close()
         self.is_running = False

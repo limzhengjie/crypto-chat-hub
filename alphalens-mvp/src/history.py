@@ -7,8 +7,14 @@ from __future__ import annotations
 
 import requests
 
+from .database import upsert_klines_batch
 
-BINANCE_REST = "https://api.binance.com/api/v3"
+
+BINANCE_REST_URLS = [
+    "https://api.binance.com/api/v3",
+    "https://api.binance.us/api/v3",
+    "https://data-api.binance.vision/api/v3",
+]
 
 
 def fetch_historical_klines(
@@ -19,6 +25,7 @@ def fetch_historical_klines(
     """
     Fetch up to `limit` closed klines (max 1000) and upsert into SQLite.
     Returns the number of rows written, or 0 on failure.
+    Tries multiple Binance API endpoints as fallback.
 
     Binance kline columns:
       0  open_time       ms timestamp
@@ -35,12 +42,17 @@ def fetch_historical_klines(
         "interval": interval,
         "limit": min(limit, 1000),
     }
-    try:
-        resp = requests.get(f"{BINANCE_REST}/klines", params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        print(f"[history] {symbol}/{interval} fetch failed: {exc}")
+    data = None
+    for base_url in BINANCE_REST_URLS:
+        try:
+            resp = requests.get(f"{base_url}/klines", params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as exc:
+            print(f"[history] {symbol}/{interval} fetch failed ({base_url}): {exc}")
+            continue
+    if not data:
         return 0
 
     sym = symbol.upper()
