@@ -81,6 +81,27 @@ def upsert_kline(
         conn.commit()
 
 
+def upsert_klines_batch(rows: list[tuple]) -> None:
+    """Batch upsert klines. Each tuple: (symbol, interval, open_time, open, high, low, close, volume, is_closed)."""
+    if not rows:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO klines (symbol, interval, open_time, open, high, low, close, volume, is_closed)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, interval, open_time) DO UPDATE SET
+                high      = excluded.high,
+                low       = excluded.low,
+                close     = excluded.close,
+                volume    = excluded.volume,
+                is_closed = excluded.is_closed
+            """,
+            rows,
+        )
+        conn.commit()
+
+
 def get_klines(symbol: str, interval: str = "1m", limit: int = 100) -> list:
     """Return up to `limit` most recent klines for a symbol+interval, oldest-first."""
     with get_conn() as conn:
