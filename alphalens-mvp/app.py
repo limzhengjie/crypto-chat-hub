@@ -30,6 +30,12 @@ from src.agent import run_agent
 
 load_dotenv()
 
+# Make Streamlit Community Cloud secrets available as env vars
+if hasattr(st, "secrets"):
+    for key, value in st.secrets.items():
+        if isinstance(value, str):
+            os.environ.setdefault(key, value)
+
 AVAILABLE_SYMBOLS = [
     "BTCUSDT",
     "ETHUSDT",
