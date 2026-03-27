@@ -500,6 +500,7 @@ def _inject_theme(t: dict) -> None:
         [data-testid="stMetric"] {{
             background: {t["card"]}; border: 1px solid {t["border"]};
             border-radius: {r}; padding: 16px 20px 12px;
+            min-height: 115px;
         }}
         [data-testid="stMetricLabel"] {{
             font-size: 0.7rem !important; font-weight: 500 !important;
@@ -1126,20 +1127,22 @@ for sym in symbols:
         s.start()
         st.session_state[ks_key] = s
 
-# ── Order book stream: primary symbol ────────────────────────────────────────────
-ob_key = f"ob_{primary}"
+# ── Order book streams: all selected symbols ─────────────────────────────────────
+active_obs = {f"ob_{sym}" for sym in symbols}
 
 for k in list(st.session_state.keys()):
-    if k.startswith("ob_") and k != ob_key:
+    if k.startswith("ob_") and k not in active_obs:
         v = st.session_state[k]
         if isinstance(v, BinanceOrderBookStream):
             v.stop()
             del st.session_state[k]
 
-if ob_key not in st.session_state:
-    obs = BinanceOrderBookStream(primary)
-    obs.start()
-    st.session_state[ob_key] = obs
+for sym in symbols:
+    ob_key = f"ob_{sym}"
+    if ob_key not in st.session_state:
+        obs = BinanceOrderBookStream(sym)
+        obs.start()
+        st.session_state[ob_key] = obs
 
 # ── Header ───────────────────────────────────────────────────────────────────────
 primary_stream = st.session_state.get(f"ks_{primary}_{interval}")
@@ -1585,14 +1588,20 @@ with tab_dashboard:
                             else:
                                 st.info(f"⏳ {sym} — waiting for data…")
 
-            # ── Order book ───────────────────────────────────────────────────────
+            # ── Order books ──────────────────────────────────────────────────────
             st.divider()
-            st.markdown(f"### 📖 Order Book — {primary}")
-            ob_stream: BinanceOrderBookStream = st.session_state[ob_key]
+            st.markdown("### 📖 Order Book")
+            for _ob_idx, sym in enumerate(symbols):
+                st.markdown(f"#### {sym}")
+                ob_stream = st.session_state.get(f"ob_{sym}")
+                if not isinstance(ob_stream, BinanceOrderBookStream):
+                    st.info(f"⏳ {sym} — initializing order book stream…")
+                    continue
 
-            if not ob_stream.book.has_data:
-                st.info("⏳ Waiting for order book data…")
-            else:
+                if not ob_stream.book.has_data:
+                    st.info(f"⏳ {sym} — waiting for order book data…")
+                    continue
+
                 book = ob_stream.book
                 bids, asks = book.snapshot()
                 m1, m2, m3, m4 = st.columns(4)
@@ -1655,7 +1664,7 @@ with tab_dashboard:
                         hide_index=True,
                     )
 
-                with st.expander("Market Depth Chart", expanded=False):
+                with st.expander(f"Market Depth Chart — {sym}", expanded=False):
                     bid_prices = [b[0] for b in bids]
                     ask_prices = [a[0] for a in asks]
                     bid_cum, ask_cum, cum = [], [], 0
@@ -1706,6 +1715,9 @@ with tab_dashboard:
                         legend=dict(orientation="h"),
                     )
                     st.plotly_chart(fig_depth, width="stretch")
+
+                if _ob_idx < len(symbols) - 1:
+                    st.divider()
 
         _dashboard()
 
