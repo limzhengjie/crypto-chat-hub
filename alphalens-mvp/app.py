@@ -586,6 +586,13 @@ def _inject_theme(t: dict) -> None:
         }}
         .stChatInputContainer textarea {{ color: {t["text"]} !important; }}
 
+        /* Hide Streamlit default UI chrome */
+        #MainMenu {{ visibility: hidden; }}
+        header[data-testid="stHeader"] button[kind="header"] {{ display: none; }}
+        [data-testid="stDecoration"] {{ display: none; }}
+        footer {{ display: none !important; }}
+        .stDeployButton {{ display: none !important; }}
+
         /* Scrollbar */
         [data-testid="stVerticalBlockBorderWrapper"] {{ scrollbar-width: thin; scrollbar-color: {t["border"]} transparent; }}
         [data-testid="stVerticalBlockBorderWrapper"]::-webkit-scrollbar {{ width: 4px; }}
@@ -593,12 +600,77 @@ def _inject_theme(t: dict) -> None:
 
         /* Buttons */
         .stButton > button[kind="primary"] {{
-            background: {t["green"]}; color: #ffffff !important;
+            background: {t["accent"]}; color: {btn_text} !important;
             border: none; border-radius: {r}; font-weight: 600;
+            transition: background 0.15s ease, transform 0.1s ease;
         }}
-        .stButton > button[kind="primary"]:hover {{ background: #16a34a; }}
+        .stButton > button[kind="primary"]:hover {{ background: {t["accent_hover"]}; transform: translateY(-1px); }}
+        .stButton > button[kind="primary"]:active {{ transform: translateY(0); }}
+        .stButton > button {{
+            transition: border-color 0.15s ease, background 0.15s ease;
+        }}
+
+        /* Cards / Metrics — smooth hover */
+        [data-testid="stMetric"] {{
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }}
+        [data-testid="stMetric"]:hover {{
+            border-color: {t["accent"]}40;
+            box-shadow: 0 0 0 1px {t["accent"]}20;
+        }}
+
+        /* Download buttons — compact style */
+        .stDownloadButton > button {{
+            background: {t["card"]} !important;
+            border: 1px solid {t["border"]} !important;
+            border-radius: {r} !important;
+            color: {t["text_muted"]} !important;
+            font-size: 0.78rem !important;
+            font-weight: 500 !important;
+            transition: border-color 0.15s ease, color 0.15s ease;
+        }}
+        .stDownloadButton > button:hover {{
+            border-color: {t["accent"]} !important;
+            color: {t["text"]} !important;
+        }}
+
+        /* Tab transition */
+        .stTabs [data-baseweb="tab"] {{
+            transition: color 0.15s ease;
+        }}
+
+        /* Chat input focus glow */
+        .stChatInputContainer:focus-within {{
+            border-color: {t["accent"]}80 !important;
+            box-shadow: 0 0 0 1px {t["accent"]}30;
+        }}
+
+        /* Status widget — cleaner */
+        [data-testid="stStatusWidget"] {{
+            background: {t["card"]} !important;
+            border: 1px solid {t["border"]} !important;
+            border-radius: {r} !important;
+        }}
+
+        /* Selectbox hover */
+        [data-baseweb="select"] {{
+            transition: border-color 0.15s ease;
+        }}
+
+        /* Anchor links on headings — hide by default */
+        [data-testid="stHeadingWithActionElements"] a {{
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }}
+        [data-testid="stHeadingWithActionElements"]:hover a {{
+            opacity: 0.5;
+        }}
 
         /* Status badge (dashboard live strip — keep clear of metrics below) */
+        @keyframes alphalens-live-pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.4; }}
+        }}
         .status-bar {{
             display: inline-flex; align-items: center; gap: 8px;
             background: {t["card"]}; border: 1px solid {t["border"]};
@@ -609,8 +681,9 @@ def _inject_theme(t: dict) -> None:
         .status-bar .dot {{
             width: 6px; height: 6px; border-radius: 50%;
             background: {t["green"]}; display: inline-block;
+            animation: alphalens-live-pulse 2s ease-in-out infinite;
         }}
-        .status-bar .dot.off {{ background: {t["red"]}; }}
+        .status-bar .dot.off {{ background: {t["red"]}; animation: none; }}
 
         /* Market Consensus card — row layout + live dot (Prediction Markets tab) */
         @keyframes alphalens-consensus-pulse {{
@@ -705,6 +778,48 @@ def _inject_theme(t: dict) -> None:
             flex-wrap: wrap;
             gap: 10px;
             margin: 1rem 0 1.25rem;
+        }}
+
+        /* News feed cards */
+        .alphalens-news-card {{
+            padding: 16px 18px;
+            margin-bottom: 10px;
+            border-radius: {r};
+            border: 1px solid {t["border"]};
+            background: {t["card"]};
+            transition: border-color 0.15s ease, transform 0.1s ease;
+        }}
+        .alphalens-news-card:hover {{
+            border-color: {t["accent"]}40;
+            transform: translateY(-1px);
+        }}
+        .alphalens-news-card .news-source {{
+            font-size: 0.72rem; font-weight: 600;
+            color: {t["accent"]}; letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }}
+        .alphalens-news-card .news-time {{
+            font-size: 0.7rem; color: {t["text_muted"]}; opacity: 0.6;
+        }}
+        .alphalens-news-card .news-title {{
+            font-size: 0.92rem; font-weight: 600; color: {t["text"]};
+            line-height: 1.4; margin-bottom: 6px;
+            transition: color 0.15s ease;
+        }}
+        .alphalens-news-card .news-title:hover {{
+            color: {t["accent_text"]};
+        }}
+        .alphalens-news-card .news-body {{
+            font-size: 0.78rem; color: {t["text_muted"]}; opacity: 0.7;
+            line-height: 1.5;
+        }}
+        .alphalens-news-card .news-footer {{
+            display: flex; justify-content: flex-end; margin-top: 6px;
+            padding-top: 6px; border-top: 1px solid {t["border_subtle"]};
+        }}
+        .alphalens-news-card .news-watermark {{
+            font-size: 0.68rem; color: {t["text_muted"]}; opacity: 0.35;
+            font-weight: 500; letter-spacing: 0.03em;
         }}
 
         /* ── Mobile responsive ──────────────────────────────────────── */
@@ -1882,16 +1997,20 @@ with tab_research:
             )
 
             # ── Fixed-height scrollable chat window ───────────────────────────────
-            chat_window = st.container(height=520, border=False)
+            chat_window = st.container(height=560, border=False)
             with chat_window:
                 if not st.session_state["chat_messages"]:
                     with st.chat_message("assistant"):
                         st.markdown(
                             f"**AlphaLens Chatbot** — ask anything about "
                             f"**{sym}** or any crypto.\n\n"
-                            "I pull live data from Binance, CoinGecko, DefiLlama, "
-                            "Binance Futures, and Polymarket — then give you a cited answer.\n\n"
-                            "Use the quick buttons below or type your own question."
+                            "I pull live data from **Binance**, **CoinGecko**, **DefiLlama**, "
+                            "**Binance Futures**, and **Polymarket** — then give you a cited answer.\n\n"
+                            "**Try asking:**\n"
+                            f'- *"Is {sym} a good buy right now?"*\n'
+                            f'- *"What\'s the technical setup for {sym}?"*\n'
+                            f'- *"What do prediction markets say about {sym}?"*\n\n'
+                            "Or use the **quick research** presets below."
                         )
                 for _mi, msg in enumerate(st.session_state["chat_messages"]):
                     with st.chat_message(msg["role"]):
@@ -2289,18 +2408,12 @@ with tab_signal_scanner:
                     or pd.isna(s50)
                     or float(s50) == 0
                 ):
-                    return (
-                        f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
-                    )
+                    return f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
                 a20, a50 = float(s20), float(s50)
                 if abs(a20 - a50) / abs(a50) < 0.001:
-                    return (
-                        f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
-                    )
+                    return f'<span class="alphalens-scanner-trend" style="color:{n_txt};">→ Neutral</span>'
                 if a20 > a50:
-                    return (
-                        f'<span class="alphalens-scanner-trend" style="color:{g_txt};">↑ Bullish</span>'
-                    )
+                    return f'<span class="alphalens-scanner-trend" style="color:{g_txt};">↑ Bullish</span>'
                 return f'<span class="alphalens-scanner-trend" style="color:{r_txt};">↓ Bearish</span>'
 
             th = (
@@ -2356,7 +2469,7 @@ with tab_signal_scanner:
                     "<tr class='alphalens-scanner-row'>"
                     f'<td><span style="display:inline-flex;align-items:center;justify-content:center;'
                     f"min-width:40px;padding:4px 10px;border-radius:9999px;background:{badge};"
-                        f'color:#fff;font-weight:700;font-size:12px;">{html.escape(tick)}</span></td>'
+                    f'color:#fff;font-weight:700;font-size:12px;">{html.escape(tick)}</span></td>'
                     f"<td><div class='alphalens-scanner-cell-main' style='color:{t['text']};'>"
                     f"${rw['close']:,.2f}</div>"
                     f"<div class='alphalens-scanner-cell-sub' style='color:{chg_c};'>"
@@ -2647,7 +2760,9 @@ with tab_prediction:
             s2.metric("Total Volume", _fmt_vol(total_vol))
             s3.metric("Coins", " · ".join(coins_in_view) if coins_in_view else "—")
 
-            _missing_selected = [c for c in _selected_specific if c not in _visible_coin_set]
+            _missing_selected = [
+                c for c in _selected_specific if c not in _visible_coin_set
+            ]
             if _missing_selected:
                 st.info(
                     f"No prediction market data for {', '.join(_missing_selected)}. "
@@ -3154,11 +3269,10 @@ with tab_news:
                 )
                 return
 
-            # Status bar (same pattern as Prediction Markets tab)
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">'
                 f'<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
-                f'background:#22c55e;animation:pulse 2s infinite;"></span>'
+                f'background:{t["green"]};animation:alphalens-live-pulse 2s ease-in-out infinite;"></span>'
                 f'<span style="font-size:0.78rem;color:{t["label"]};font-weight:500;">'
                 f"{len(all_articles)} articles"
                 f" · {len(st.session_state['news_archive'])} in archive</span>"
@@ -3190,33 +3304,20 @@ with tab_news:
                         _tago = f"{d}d {h}h ago"
 
                 st.markdown(
-                    f'<div style="padding:16px 18px;margin-bottom:10px;'
-                    f"border-radius:{t['radius']};"
-                    f"border:1px solid {t['border']};"
-                    f'background:{t["card"]};">'
-                    # Header: source + time | watermark
+                    f'<div class="alphalens-news-card">'
                     f'<div style="display:flex;justify-content:space-between;'
                     f'align-items:center;margin-bottom:8px;">'
                     f'<div style="display:flex;align-items:center;gap:10px;">'
-                    f'<span style="font-size:0.72rem;font-weight:600;color:{_news_accent};'
-                    f'letter-spacing:0.04em;text-transform:uppercase;">{_source}</span>'
-                    f'<span style="font-size:0.7rem;color:rgba(255,255,255,0.35);">{_tago}</span>'
+                    f'<span class="news-source">{_source}</span>'
+                    f'<span class="news-time">{_tago}</span>'
                     f"</div>"
-                    f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
-                    f'letter-spacing:0.03em;">RSS</span>'
+                    f'<span class="news-watermark">RSS</span>'
                     f"</div>"
-                    # Title (clickable)
                     f'<a href="{_url}" target="_blank" style="text-decoration:none;">'
-                    f'<div style="font-size:0.92rem;font-weight:600;color:{t["text"]};'
-                    f'line-height:1.4;margin-bottom:6px;">{_title}</div></a>'
-                    # Body snippet
-                    f'<div style="font-size:0.78rem;color:rgba(255,255,255,0.5);'
-                    f'line-height:1.5;">{_body}{"..." if len(_body) >= 297 else ""}</div>'
-                    # Footer watermark (matches Prediction Markets pattern)
-                    f'<div style="display:flex;justify-content:flex-end;margin-top:6px;'
-                    f'padding-top:6px;border-top:1px solid rgba(255,255,255,0.06);">'
-                    f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
-                    f'letter-spacing:0.03em;">{_source}</span>'
+                    f'<div class="news-title">{_title}</div></a>'
+                    f'<div class="news-body">{_body}{"..." if len(_body) >= 297 else ""}</div>'
+                    f'<div class="news-footer">'
+                    f'<span class="news-watermark">{_source}</span>'
                     f"</div>"
                     f"</div>",
                     unsafe_allow_html=True,
