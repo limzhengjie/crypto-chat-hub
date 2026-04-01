@@ -1123,6 +1123,9 @@ def _archive_current_chat() -> None:
     new_id = str(int(_time.time() * 1000))
     convs.append({"id": new_id, "title": title, "messages": [dict(m) for m in msgs]})
     st.session_state["active_conv_id"] = new_id
+    # Keep only the 10 most recent conversations to bound memory
+    if len(convs) > 10:
+        st.session_state["conversations"] = convs[-10:]
 
 
 def _run_selected_quick_research() -> None:
@@ -2145,6 +2148,11 @@ with tab_research:
                             "symbol": _prompt_sym,
                         }
                     )
+                    # Cap chat history to avoid unbounded memory growth
+                    if len(st.session_state["chat_messages"]) > 200:
+                        st.session_state["chat_messages"] = st.session_state[
+                            "chat_messages"
+                        ][-200:]
                     _archive_current_chat()
 
         _chatbot(primary.replace("USDT", ""))
@@ -2664,6 +2672,9 @@ with tab_prediction:
                 if vol < 10_000:
                     continue
                 odds = m["yes_price"] * 100
+                # Skip effectively resolved markets (odds pinned near 0% or 100%)
+                if odds <= 1 or odds >= 99:
+                    continue
                 hours = _hours_until(m.get("expiry"))
                 markets.append(
                     {
@@ -2674,6 +2685,7 @@ with tab_prediction:
                         "volume": vol,
                         "liquidity": m.get("liquidity", 0),
                         "hours_left": round(hours, 1),
+                        "expiry": m.get("expiry"),
                         "slug": m.get("slug", ""),
                         "clob_token_id": m.get("clob_token_id"),
                         "threshold": m.get("threshold"),
@@ -2701,7 +2713,13 @@ with tab_prediction:
                 )
                 st.session_state["mkt_history"][key] = st.session_state["mkt_history"][
                     key
-                ][-120:]
+                ][-60:]
+
+            # Prune stale market keys no longer in the active set
+            active_keys = {m["id"] or m["question"][:60] for m in markets}
+            stale = [k for k in st.session_state["mkt_history"] if k not in active_keys]
+            for k in stale:
+                del st.session_state["mkt_history"][k]
 
             # ── Filter by coin ────────────────────────────────────────────────
             selected_coins = coin_filter if coin_filter else ["All"]
@@ -2796,7 +2814,7 @@ with tab_prediction:
                     # Resolution date
                     h = best["hours_left"]
                     exp_dt = _now + timedelta(hours=h)
-                    by_when = exp_dt.strftime("by %b %d")
+                    by_when = exp_dt.strftime("by %b %d, %Y")
 
                     consensus_rows.append(
                         {
@@ -2892,6 +2910,10 @@ with tab_prediction:
             coin = group[0]["symbol"].replace("USDT", "")
             total_vol = sum(m["volume"] for m in group)
             direction = group[0].get("direction", "above")
+            _grp_expiry = group[0].get("expiry")
+            _grp_end = (
+                f" · Ends {_grp_expiry.strftime('%b %d, %Y')}" if _grp_expiry else ""
+            )
 
             # Sort by threshold
             sorted_g = sorted(group, key=lambda m: m["threshold"] or 0)
@@ -2903,7 +2925,7 @@ with tab_prediction:
                     f'padding:2px 8px;border-radius:6px;font-size:0.72rem;font-weight:700;">{coin}</span>'
                     f'<span style="font-weight:600;font-size:0.95rem;">{title}</span>'
                     f'<span style="color:rgba(255,255,255,0.35);font-size:0.75rem;margin-left:auto;">'
-                    f"{_fmt_vol(total_vol)} vol · {len(group)} markets · "
+                    f"{_fmt_vol(total_vol)} vol · {len(group)} markets{_grp_end} · "
                     f'<span style="color:#2E5CFF;">Polymarket</span></span>'
                     f"</div>",
                     unsafe_allow_html=True,
@@ -3102,7 +3124,10 @@ with tab_prediction:
                         key=f"spark_{opp['id']}",
                     )
 
-                # Footer: volume · time left | platform watermark
+                # Footer: volume · time left · end date | platform watermark
+                _expiry = opp.get("expiry")
+                _end_str = _expiry.strftime("%b %d, %Y") if _expiry else ""
+                _end_html = f"<span>Ends {_end_str}</span>" if _end_str else ""
                 st.markdown(
                     f'<div style="display:flex;justify-content:space-between;'
                     f"align-items:center;margin-top:4px;padding-top:8px;"
@@ -3111,6 +3136,7 @@ with tab_prediction:
                     f'color:rgba(255,255,255,0.4);font-weight:500;">'
                     f"<span>{_fmt_vol(opp['volume'])} vol</span>"
                     f"<span>{_fmt_time(opp['hours_left'])}</span>"
+                    f"{_end_html}"
                     f"</div>"
                     f'<span style="font-size:0.68rem;color:rgba(255,255,255,0.25);font-weight:500;'
                     f'letter-spacing:0.03em;color:#2E5CFF;">Polymarket</span>'
