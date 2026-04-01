@@ -12,6 +12,7 @@ import json
 import os
 import ssl
 import threading
+import time
 from typing import Optional
 
 import websocket

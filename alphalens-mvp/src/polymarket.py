@@ -146,6 +146,9 @@ def _parse_market(m: dict, event_id: str = "", event_title: str = "") -> dict | 
 
     if yes_price is None:
         return None
+    # Skip resolved/settled markets (odds pinned at extremes)
+    if yes_price <= 0.01 or yes_price >= 0.99:
+        return None
 
     expiry = None
     end_date = m.get("endDate")
