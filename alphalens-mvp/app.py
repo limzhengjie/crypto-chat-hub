@@ -1166,6 +1166,7 @@ _grid_color = "#e5e7eb" if _is_light_theme else "#2a2a2a"
 # ════════════════════════════════════════════════════════════════════════════════
 # TABS (main area — horizontal bar unchanged)
 # ════════════════════════════════════════════════════════════════════════════════
+# Streamlit 1.50: st.tabs() only accepts a list of tab titles (no extra kwargs).
 
 tab_dashboard, tab_research, tab_signal_scanner, tab_prediction, tab_news = st.tabs(
     [
@@ -1174,23 +1175,12 @@ tab_dashboard, tab_research, tab_signal_scanner, tab_prediction, tab_news = st.t
         "🔍 Signal Scanner",
         "🎯 Prediction Markets",
         "📰 News Feed",
-    ],
-    on_change="rerun",
-    key="alphalens_tabs",
+    ]
 )
 
-if tab_dashboard.open:
+# Tab tracking via st.tabs context (tab.open not available in Streamlit 1.50)
+if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "Dashboard"
-elif tab_research.open:
-    st.session_state["active_tab"] = "Chatbot"
-elif tab_signal_scanner.open:
-    st.session_state["active_tab"] = "Signal Scanner"
-elif tab_prediction.open:
-    st.session_state["active_tab"] = "Prediction Markets"
-elif tab_news.open:
-    st.session_state["active_tab"] = "News Feed"
-else:
-    st.session_state["active_tab"] = st.session_state.get("active_tab", "Dashboard")
 
 # ── Sidebar (tab-specific controls + footer) ───────────────────────────────────
 with st.sidebar:
@@ -1409,7 +1399,7 @@ is_live = primary_stream and primary_stream.is_running
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_dashboard:
-    if tab_dashboard.open:
+    if True:  # tab_dashboard
         st.session_state["active_tab"] = "Dashboard"
         _asset_title = " · ".join(symbols) if len(symbols) > 1 else primary
         st.markdown(f"### {_asset_title}")
@@ -1984,7 +1974,7 @@ with tab_dashboard:
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_research:
-    if tab_research.open:
+    if True:  # tab_research
         st.session_state["active_tab"] = "Chatbot"
 
         @st.fragment
@@ -2207,7 +2197,7 @@ with tab_research:
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_signal_scanner:
-    if tab_signal_scanner.open:
+    if True:  # tab_signal_scanner
         st.session_state["active_tab"] = "Signal Scanner"
         _scan_auto = bool(st.session_state.get("scanner_auto_refresh", True))
 
@@ -2618,7 +2608,7 @@ with tab_signal_scanner:
 # ════════════════════════════════════════════════════════════════════════════════
 
 with tab_prediction:
-    if tab_prediction.open:
+    if True:  # tab_prediction
         st.session_state["active_tab"] = "Prediction Markets"
         st.markdown("### 🎯 Live Prediction Markets")
         st.caption("Auto-refreshing every 30s · Polymarket")
@@ -3156,7 +3146,7 @@ NEWS_COIN_OPTIONS = [
 ]
 
 with tab_news:
-    if tab_news.open:
+    if True:  # tab_news
         st.session_state["active_tab"] = "News Feed"
         st.markdown("### 📰 Crypto News Feed")
         st.caption(

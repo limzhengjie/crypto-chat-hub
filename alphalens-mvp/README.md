@@ -1,148 +1,195 @@
 # AlphaLens MVP
 
-> AI-powered crypto research agent — live Binance data, GPT-4o chatbot with tool use, Polymarket prediction markets feed, and downloadable PDF reports.
+**AI-assisted crypto research PoC** — live Binance data, technical indicators, research chatbot (OpenAI / Gemini), Polymarket, RSS news, and a scanner — in one **Streamlit** app. Public market APIs only; you need an **LLM API key** for the chatbot.
 
 ---
 
-## What it does
+## Install and run
 
-AlphaLens streams live market data from Binance, computes technical indicators, runs a GPT-4o research agent with 8 data tools, and surfaces live Polymarket prediction markets — all in one Streamlit dashboard.
+**Requirements:** Python **3.9+**, internet access (Binance, RSS, optional LLM APIs).
 
-### Tabs
-
-| Tab | What it does |
-|-----|-------------|
-| **Dashboard** | Live candlestick charts, RSI/MACD panels, Bollinger Bands, order book depth |
-| **Chatbot** | Ask anything — agent fetches from CoinGecko, DefiLlama, Binance Futures, Polymarket. Quick research buttons (Full Deep Dive, Technical Setup, Sentiment, etc). Download responses as PDF or Word. |
-| **Prediction Markets** | Live Polymarket feed with coin filter, time period filter, market consensus summary, price distribution histograms, sparkline charts. 2000+ markets, filtered to tracked assets with >$10K volume. |
-
----
-
-## Prediction Markets
-
-The Prediction Markets tab fetches all active crypto markets from Polymarket and presents them as an information feed — what does the crowd think about price targets?
-
-### Features
-
-- **Market Consensus** — one-liner per coin: "BTC: 95% chance above $80,000 by Mar 31"
-- **Price Distribution Histograms** — top 2 events by volume show bar charts of probability at each strike price
-- **Sparkline Cards** — individual market cards with Polymarket/Robinhood-style probability charts
-- **Coin Filter** — filter by BTC, ETH, SOL, and 15+ other coins
-- **Time Period Filter** — Today, This Week, This Month, Long-term
-- **Polymarket Watermark** — source attribution on every card (ready for multi-source: Kalshi, etc)
-- **60s Cache + Parallel Fetch** — ThreadPoolExecutor fires all API calls simultaneously, cached for speed
-
-### Data Sources
-
-Markets are fetched via the Polymarket Gamma API events endpoint with crypto tag slugs (`crypto`, `bitcoin`, `ethereum`, `solana`, `defi`), plus a keyword sweep fallback. 40+ token-to-symbol mappings with word-boundary matching to avoid false positives (e.g., "MegaETH" doesn't match "ETH").
-
----
-
-## Chatbot / Research Agent
-
-GPT-4o (or Gemini) agent with 8 real-time data tools:
-
-| Tool | Source | Data |
-|------|--------|------|
-| `get_market_data` | CoinGecko | Price, market cap, rank, 24h/7d/30d changes, ATH, supply |
-| `get_tvl` | DefiLlama | Total Value Locked for DeFi chains |
-| `get_funding_rate` | Binance Futures | Perpetual futures funding rate + sentiment |
-| `get_open_interest` | Binance Futures | Open interest (contract count) |
-| `get_technical_analysis` | Binance (live) | RSI, MACD, Bollinger Bands, moving averages |
-| `get_prediction_markets` | Polymarket | Live crowd-sourced probabilities for price targets |
-| `get_prediction_accuracy` | Polymarket | Historical calibration — how accurate were past predictions |
-
-### Quick Research Buttons
-
-One-click prompts: Full Deep Dive, Technical Setup, Market Sentiment, Prediction Markets, Key Risks, Worth Buying?
-
-### PDF Reports
-
-Any chatbot response >100 chars gets a "Download PDF" button. Reports are generated with:
-- Dark header with amber accent stripe
-- Section dividers, proper typography
-- Page numbers and footer
-- Disclaimer
-
----
-
-## Data Flow
-
-```
-Binance REST API  →  SQLite (500 historical candles per symbol)
-        │
-        ▼
-Binance WebSocket  →  Live kline + order book streams  →  SQLite
-        │
-        ▼
-Streamlit Dashboard  ←  indicators.py (SMA, EMA, BB, RSI, MACD)
-
-Polymarket Gamma API  →  Events endpoint (tag_slug: crypto/bitcoin/ethereum/solana/defi)
-        │                  + Markets endpoint (keyword sweep)
-        ▼                  ThreadPoolExecutor (10 workers, parallel)
-Live prediction market cards with sparklines, price distributions, consensus summary
-        │
-        ▼
-GPT-4o Agent  ←  8 tools (CoinGecko, DefiLlama, Binance, Polymarket)
-        │
-        ▼
-Cited research response  →  PDF/Word export
-```
-
----
-
-## Requirements
-
-- Python 3.9+
-- An OpenAI or Gemini API key
-
-No Binance or Polymarket API keys required — all endpoints used are public.
-
----
-
-## Setup
+### 1. Install
 
 ```bash
-cd alphalens-mvp
+cd crypto-chat-hub/alphalens-mvp   # or your clone path
+
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # fill in your API key (gpt_api_key or GEMINI_API_KEY)
-streamlit run app.py   # opens at http://localhost:8501
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env — add at least one LLM key, e.g.:
+#   OPENAI_API_KEY=sk-...
+#   # or
+#   gpt_api_key=sk-...
+#   # or (Google Gemini, OpenAI-compatible)
+#   GEMINI_API_KEY=...
 ```
+
+### 2. Run
+
+```bash
+source .venv/bin/activate
+python3 -m streamlit run app.py
+```
+
+Open **http://localhost:8501**.
+
+**Tip:** Use `python3 -m streamlit` (not bare `streamlit`) so the command uses your venv.
 
 ---
 
-## Project Structure
+## Dependencies
+
+Everything is pinned in **`requirements.txt`**. Main packages:
+
+| Package | Purpose |
+|---------|---------|
+| `streamlit` | Web UI |
+| `plotly` | Charts |
+| `pandas` | Data / indicators |
+| `websocket-client` | Binance streams |
+| `openai` | Chat + tool use (OpenAI or Gemini endpoint) |
+| `python-dotenv`, `requests`, `python-docx`, `fpdf2` | Config, HTTP, exports |
+
+Install all at once: `python3 -m pip install -r requirements.txt`.
+
+---
+
+## Project overview
+
+| Layer | Role |
+|--------|------|
+| **UI** | `app.py` — Streamlit dashboard (tabs, themes, charts, chat, exports) |
+| **Data & streaming** | `src/` — SQLite, Binance REST + WebSocket, RSS, Polymarket |
+| **Intelligence** | `src/agent.py` + `src/tools.py` — tool-calling loop with cited answers |
+| **Config / secrets** | `.env` (see `.env.example`) — never commit real keys |
+
+---
+
+## Features (main tabs)
+
+| Tab | Description |
+|-----|-------------|
+| **Dashboard** | Live candles, volume, RSI/MACD/Bollinger, order book, themed metrics |
+| **Chatbot** | Q&A with tools (CoinGecko, DefiLlama, Binance Futures, TA DB, Polymarket, news); quick prompts; exports |
+| **Signal Scanner** | Technical / scanner summaries across your watchlist |
+| **Prediction Markets** | Polymarket views (filters, summaries, charts) |
+| **News Feed** | RSS headlines; coin / time filters |
+
+---
+
+## Repository layout
+
+This PoC uses a **flat layout** (Streamlit *is* the frontend). Rubric mapping:
+
+| Rubric idea | In this repo |
+|-------------|----------------|
+| **Frontend** | `app.py` + Plotly / HTML styling |
+| **Backend / services** | `src/*.py` |
+| **Prompts** | `src/prompts/` |
+| **Contracts** | *N/A* |
+| **Scripts / notebooks** | *Optional* — add `scripts/` or `notebooks/` if needed |
+
+### Directory tree
 
 ```
 alphalens-mvp/
-├── app.py                  Streamlit entry point — all 3 tabs, themes, PDF export
+├── app.py
 ├── requirements.txt
 ├── .env.example
+├── .gitignore
+├── README.md
 └── src/
-    ├── database.py         SQLite schema, upsert, queries
-    ├── history.py          Binance REST → historical kline backfill
-    ├── ws_client.py        Binance WebSocket kline stream → SQLite
-    ├── orderbook.py        Binance WebSocket depth stream → in-memory book
-    ├── indicators.py       SMA, EMA, Bollinger Bands, RSI, MACD
-    ├── agent.py            GPT-4o/Gemini research agent with tool-use loop
-    ├── tools.py            8 data-fetching tools + OpenAI function definitions
-    ├── polymarket.py       Polymarket Gamma API client — parallel fetch, caching, CLOB history
+    ├── agent.py
+    ├── database.py
+    ├── history.py
+    ├── ws_client.py
+    ├── orderbook.py
+    ├── indicators.py
+    ├── polymarket.py
+    ├── tools.py
+    ├── metric_tooltip.py
     └── prompts/
-        └── quick_prompts.py  One-click research prompt templates
+        ├── __init__.py
+        └── quick_prompts.py
 ```
 
 ---
 
-## Themes
+## Deploy the PoC
 
-4 professional themes (sidebar dropdown):
+### Streamlit Community Cloud (quickest)
 
-| Theme | Style |
-|-------|-------|
-| **Studio** (default) | Amber accent, slate backgrounds, 6px radius — Bloomberg/Grafana |
-| **Studio Light** | White background, dark text, amber accent — light mode |
-| **Artemis** | Indigo accent, zinc grays, 8px radius — clean analytics |
-| **Terminal** | Teal accent, GitHub-dark, 6px radius — data-dense |
-| **Minimal** | White accent, pure black, barely-there borders — Robinhood/Linear |
+1. Push this repo to GitHub (without `.env` — use Cloud secrets).
+2. [share.streamlit.io](https://streamlit.io/cloud) → New app → set entry file to **`app.py`**.
+3. Under **Secrets**, add env vars (e.g. `OPENAI_API_KEY` or `GEMINI_API_KEY`) in TOML format.
+4. Note: WebSockets + SQLite on Cloud are **ephemeral**; fine for demos, state resets on restart.
+
+### Docker (optional)
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8501
+CMD ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+```
+
+Build with `docker build -t alphalens .`, run with `-p 8501:8501` and pass secrets via `-e` (never bake keys into the image).
+
+### VPS
+
+Same as local run behind nginx/Caddy TLS; use `--server.address 0.0.0.0` and add auth for production.
+
+---
+
+## Data flow (high level)
+
+```
+Binance REST  ──► SQLite (historical klines)
+Binance WS    ──► SQLite + in-memory order book
+                         │
+                         ▼
+              Streamlit  ←  indicators, Plotly
+Polymarket APIs ──► Scanner / Prediction tab / agent tools
+RSS feeds     ──► News tab + agent tool
+                         │
+                         ▼
+              LLM agent (tools) ──► cited answers, exports
+```
+
+---
+
+## Agent tools (`src/tools.py`)
+
+| Tool | Source (typical) |
+|------|------------------|
+| `get_market_data` | CoinGecko |
+| `get_tvl` | DefiLlama |
+| `get_funding_rate` / `get_open_interest` | Binance Futures |
+| `get_technical_analysis` | Local DB (Binance-derived) |
+| `get_prediction_markets` | Polymarket |
+| `get_prediction_accuracy` | Polymarket |
+| `get_crypto_news` | RSS outlets |
+
+---
+
+## Troubleshooting
+
+| Issue | What to try |
+|-------|-------------|
+| `pip` / `streamlit` not found | Use `python3 -m pip` and `python3 -m streamlit run app.py` |
+| Chatbot errors / quota | Set `GEMINI_API_KEY` or enable OpenAI billing; check `.env` |
+| News feed empty | Outbound HTTP required; some networks block RSS — try another network or VPN |
+| `TypeError` on `st.tabs` / `st.metric` | Use Streamlit **1.45+** per `requirements.txt`: `pip install -U streamlit` |
+
+---
+
+## License / disclaimer
+
+Educational / research prototype. **Not financial advice.** Markets are risky; verify data and compliance in your jurisdiction.

@@ -42,16 +42,17 @@ METRIC_TOOLTIP_BODIES: dict[str, str] = {
 
 
 def _metric_extras(label: str, delta: str | None) -> dict[str, Any]:
-    """Delta coloring so text-only deltas are not forced green/red by heuristics."""
+    """Extra ``st.metric`` kwargs. Only ``delta_color`` is supported (no ``delta_arrow`` in Streamlit 1.50)."""
     if not delta or not str(delta).strip():
         return {}
     d = str(delta).strip()
     if label in ("RSI (14)", "BB Position"):
-        return {"delta_color": "off", "delta_arrow": "off"}
+        return {"delta_color": "off"}
     if label == "MACD":
+        # Valid values: "normal" | "inverse" | "off" — not "green"/"red"
         if "bearish" in d.lower() or d.startswith("▼"):
-            return {"delta_color": "red", "delta_arrow": "down"}
-        return {"delta_color": "green", "delta_arrow": "up"}
+            return {"delta_color": "inverse"}
+        return {"delta_color": "normal"}
     return {}
 
 
