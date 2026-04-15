@@ -1185,146 +1185,41 @@ tab_dashboard, tab_research, tab_signal_scanner, tab_prediction, tab_news = st.t
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "Dashboard"
 
-# ── Sidebar (tab-specific controls + footer) ───────────────────────────────────
+# ── Sidebar (dashboard controls + footer) ──────────────────────────────────────
+# NOTE: st.tabs() is layout-only — every `with tab_X:` block runs on every rerun,
+# so we can't reliably know which tab the user is viewing. Earlier versions tried
+# to key sidebar contents off st.session_state["active_tab"], but because each tab
+# body overwrote that value (with the last one — News Feed — winning), the sidebar
+# would go blank after the first rerun. Dashboard controls now always render here;
+# per-tab controls (chatbot conversations, scanner refresh, market filters) live
+# inside their own tab bodies where they only render when that tab is active.
 with st.sidebar:
     st.divider()
-    _at = st.session_state.get("active_tab", "Dashboard")
-    if _at == "Dashboard":
-        st.multiselect(
-            "Assets (up to 4)",
-            AVAILABLE_SYMBOLS,
-            default=["BTCUSDT"],
-            max_selections=4,
-            key="dash_assets",
-        )
-        _di = st.session_state.get("dash_interval", "1m")
-        _di_ix = _DASH_INTERVAL_OPTS.index(_di) if _di in _DASH_INTERVAL_OPTS else 0
-        st.selectbox(
-            "Candle interval",
-            _DASH_INTERVAL_OPTS,
-            index=_di_ix,
-            key="dash_interval",
-        )
-        st.slider(
-            "Candles to display",
-            min_value=20,
-            max_value=500,
-            value=int(st.session_state.get("dash_lookback", 100)),
-            step=10,
-            key="dash_lookback",
-        )
-        st.divider()
-        st.toggle("Auto-refresh (5 s)", key="auto_refresh")
-    elif _at == "Chatbot":
-        st.markdown(
-            "<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
-            "color:rgba(255,255,255,0.4); margin-bottom:8px;'>CONVERSATIONS</div>",
-            unsafe_allow_html=True,
-        )
-
-        has_messages = bool(st.session_state.get("chat_messages"))
-
-        nc_col, cl_col = st.columns(2)
-        with nc_col:
-            if st.button(
-                "＋ New Chat",
-                use_container_width=True,
-                key="new_chat_btn",
-                disabled=not has_messages,
-            ):
-                _archive_current_chat()
-                st.session_state["chat_messages"] = []
-                st.session_state["active_conv_id"] = None
-                st.rerun()
-        with cl_col:
-            if st.button("🗑 Clear All", use_container_width=True, key="clear_all_btn"):
-                st.session_state["conversations"] = []
-                st.session_state["chat_messages"] = []
-                st.session_state["active_conv_id"] = None
-                st.rerun()
-
-        convs = st.session_state["conversations"]
-        if not convs and not has_messages:
-            st.caption("Start chatting — your conversations will appear here.")
-        else:
-            active_id = st.session_state.get("active_conv_id")
-            if has_messages and active_id is None:
-                st.markdown(
-                    "<div style='font-size:0.73rem; color:rgba(255,255,255,0.5); "
-                    "padding:6px 10px; border:1px solid rgba(255,255,255,0.1); "
-                    "border-radius:6px; margin-bottom:4px;'>▶ Current chat (unsaved)</div>",
-                    unsafe_allow_html=True,
-                )
-            for conv in reversed(convs):
-                is_active = conv["id"] == active_id
-                label = ("▶ " if is_active else "") + conv["title"]
-                if st.button(
-                    label,
-                    key=f"conv_{conv['id']}",
-                    use_container_width=True,
-                    help=f"{len(conv['messages'])} messages",
-                ):
-                    _archive_current_chat()
-                    st.session_state["chat_messages"] = [
-                        dict(m) for m in conv["messages"]
-                    ]
-                    st.session_state["active_conv_id"] = conv["id"]
-                    st.rerun()
-    elif _at == "Signal Scanner":
-        _ss_lbl = _active_theme["label"]
-        st.markdown(
-            f"<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
-            f"color:{_ss_lbl}; margin-bottom:6px;'>SIGNAL SCANNER</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "All listed assets use one timeframe. Data comes from the local store; "
-            "missing history backfills once per symbol."
-        )
-        _siv = st.session_state.get("scanner_interval", "5m")
-        _siv_ix = _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
-        st.selectbox(
-            "Scanner timeframe",
-            _DASH_INTERVAL_OPTS,
-            index=_siv_ix,
-            key="scanner_interval",
-            help="Kline size for RSI, MACD, Bollinger, and MA trend in the table.",
-        )
-        st.divider()
-        st.markdown(
-            f"<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
-            f"color:{_ss_lbl}; margin-bottom:8px;'>DATA REFRESH</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button(
-            "🔄 Refresh signals",
-            use_container_width=True,
-            key="scanner_refresh_btn",
-            help="Pull latest candles and recompute every row now (ignores the 30s cache).",
-        ):
-            st.session_state["_scanner_force_fetch"] = True
-            st.rerun()
-        st.toggle(
-            "Auto-refresh (30 s)",
-            key="scanner_auto_refresh",
-            help="On this tab, reloads the scanner on a timer. Off = update only when you refresh or change timeframe.",
-        )
-    elif _at == "Prediction Markets":
-        st.toggle("Auto-refresh (5 s)", key="auto_refresh")
-        st.multiselect(
-            "Filter by coin",
-            SCANNER_COIN_OPTIONS,
-            default=["All"],
-            key="scanner_coin_filter",
-        )
-        _tf = st.session_state.get("scanner_time_filter", "All")
-        _tf_ix = SCANNER_TIME_OPTIONS.index(_tf) if _tf in SCANNER_TIME_OPTIONS else 0
-        st.selectbox(
-            "Time period",
-            SCANNER_TIME_OPTIONS,
-            index=_tf_ix,
-            key="scanner_time_filter",
-        )
+    st.multiselect(
+        "Assets (up to 4)",
+        AVAILABLE_SYMBOLS,
+        default=["BTCUSDT"],
+        max_selections=4,
+        key="dash_assets",
+    )
+    _di = st.session_state.get("dash_interval", "1m")
+    _di_ix = _DASH_INTERVAL_OPTS.index(_di) if _di in _DASH_INTERVAL_OPTS else 0
+    st.selectbox(
+        "Candle interval",
+        _DASH_INTERVAL_OPTS,
+        index=_di_ix,
+        key="dash_interval",
+    )
+    st.slider(
+        "Candles to display",
+        min_value=20,
+        max_value=500,
+        value=int(st.session_state.get("dash_lookback", 100)),
+        step=10,
+        key="dash_lookback",
+    )
+    st.divider()
+    st.toggle("Auto-refresh (5 s)", key="auto_refresh")
 
     st.divider()
     st.caption("Data: Binance · CoinGecko · DefiLlama · Polymarket")
@@ -1978,7 +1873,72 @@ with tab_dashboard:
 
 with tab_research:
     if True:  # tab_research
-        st.session_state["active_tab"] = "Chatbot"
+        # Conversation controls — previously in the sidebar, relocated here so they
+        # only render when the user is on this tab (st.tabs can't tell us that
+        # from the sidebar itself).
+        _has_messages = bool(st.session_state.get("chat_messages"))
+        _conv_header_col, _new_chat_col, _clear_all_col = st.columns([3, 1, 1])
+        with _conv_header_col:
+            st.markdown(
+                "<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
+                "color:rgba(255,255,255,0.55); padding-top:6px;'>CONVERSATIONS</div>",
+                unsafe_allow_html=True,
+            )
+        with _new_chat_col:
+            if st.button(
+                "＋ New Chat",
+                use_container_width=True,
+                key="new_chat_btn",
+                disabled=not _has_messages,
+            ):
+                _archive_current_chat()
+                st.session_state["chat_messages"] = []
+                st.session_state["active_conv_id"] = None
+                st.rerun()
+        with _clear_all_col:
+            if st.button(
+                "🗑 Clear All",
+                use_container_width=True,
+                key="clear_all_btn",
+            ):
+                st.session_state["conversations"] = []
+                st.session_state["chat_messages"] = []
+                st.session_state["active_conv_id"] = None
+                st.rerun()
+
+        _convs = st.session_state["conversations"]
+        if not _convs and not _has_messages:
+            st.caption("Start chatting — your conversations will appear here.")
+        else:
+            with st.expander(
+                f"Saved conversations ({len(_convs)})",
+                expanded=False,
+            ):
+                _active_id = st.session_state.get("active_conv_id")
+                if _has_messages and _active_id is None:
+                    st.markdown(
+                        "<div style='font-size:0.73rem; color:rgba(255,255,255,0.6); "
+                        "padding:6px 10px; border:1px solid rgba(255,255,255,0.12); "
+                        "border-radius:6px; margin-bottom:6px;'>▶ Current chat (unsaved)</div>",
+                        unsafe_allow_html=True,
+                    )
+                for _conv in reversed(_convs):
+                    _is_active = _conv["id"] == _active_id
+                    _label = ("▶ " if _is_active else "") + _conv["title"]
+                    if st.button(
+                        _label,
+                        key=f"conv_{_conv['id']}",
+                        use_container_width=True,
+                        help=f"{len(_conv['messages'])} messages",
+                    ):
+                        _archive_current_chat()
+                        st.session_state["chat_messages"] = [
+                            dict(m) for m in _conv["messages"]
+                        ]
+                        st.session_state["active_conv_id"] = _conv["id"]
+                        st.rerun()
+
+        st.divider()
 
         @st.fragment
         def _chatbot(sym: str) -> None:
@@ -2206,7 +2166,49 @@ with tab_research:
 
 with tab_signal_scanner:
     if True:  # tab_signal_scanner
-        st.session_state["active_tab"] = "Signal Scanner"
+        # Scanner controls — relocated from the sidebar so they render only when
+        # this tab is active.
+        _ss_lbl = _active_theme["label"]
+        st.markdown(
+            f"<div style='font-size:0.72rem; font-weight:700; letter-spacing:0.08em; "
+            f"color:{_ss_lbl}; margin-bottom:4px;'>SIGNAL SCANNER CONTROLS</div>",
+            unsafe_allow_html=True,
+        )
+        _sc_tf_col, _sc_btn_col, _sc_auto_col = st.columns([2, 1, 1])
+        with _sc_tf_col:
+            _siv = st.session_state.get("scanner_interval", "5m")
+            _siv_ix = (
+                _DASH_INTERVAL_OPTS.index(_siv) if _siv in _DASH_INTERVAL_OPTS else 2
+            )
+            st.selectbox(
+                "Scanner timeframe",
+                _DASH_INTERVAL_OPTS,
+                index=_siv_ix,
+                key="scanner_interval",
+                help="Kline size for RSI, MACD, Bollinger, and MA trend in the table.",
+            )
+        with _sc_btn_col:
+            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+            if st.button(
+                "🔄 Refresh",
+                use_container_width=True,
+                key="scanner_refresh_btn",
+                help="Pull latest candles and recompute every row now (ignores the 30s cache).",
+            ):
+                st.session_state["_scanner_force_fetch"] = True
+                st.rerun()
+        with _sc_auto_col:
+            st.markdown("<div style='height:34px;'></div>", unsafe_allow_html=True)
+            st.toggle(
+                "Auto-refresh (30 s)",
+                key="scanner_auto_refresh",
+                help="On this tab, reloads the scanner on a timer.",
+            )
+        st.caption(
+            "All listed assets use one timeframe. Data comes from the local store; "
+            "missing history backfills once per symbol."
+        )
+        st.divider()
         _scan_auto = bool(st.session_state.get("scanner_auto_refresh", True))
 
         @st.fragment(run_every=30 if _scan_auto else None)
@@ -2617,9 +2619,30 @@ with tab_signal_scanner:
 
 with tab_prediction:
     if True:  # tab_prediction
-        st.session_state["active_tab"] = "Prediction Markets"
         st.markdown("### 🎯 Live Prediction Markets")
         st.caption("Auto-refreshing every 30s · Polymarket")
+
+        # Market filters — relocated from the sidebar.
+        _pm_coin_col, _pm_time_col = st.columns(2)
+        with _pm_coin_col:
+            st.multiselect(
+                "Filter by coin",
+                SCANNER_COIN_OPTIONS,
+                default=["All"],
+                key="scanner_coin_filter",
+            )
+        with _pm_time_col:
+            _tf = st.session_state.get("scanner_time_filter", "All")
+            _tf_ix = (
+                SCANNER_TIME_OPTIONS.index(_tf) if _tf in SCANNER_TIME_OPTIONS else 0
+            )
+            st.selectbox(
+                "Time period",
+                SCANNER_TIME_OPTIONS,
+                index=_tf_ix,
+                key="scanner_time_filter",
+            )
+        st.divider()
 
         if "mkt_history" not in st.session_state:
             st.session_state["mkt_history"] = {}
